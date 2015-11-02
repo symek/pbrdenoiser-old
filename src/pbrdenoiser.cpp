@@ -17,6 +17,7 @@
 
 // Self:
 #include "pbrdenoiser.hpp"
+#define UT_MAX_OPTIONS 24
 
 Image::Image( int w, int h )
 {
@@ -370,6 +371,53 @@ void denoise(SampleSet &set, Image &result, Options &opt)
 }
 
 
+
+bool writeBMP( const std::string &path, const Image &image )
+{
+    std::ofstream bmp( path.c_str(), std::ios::binary );
+    BmpHeader header;
+    bmp.write("BM", 2);
+    header.mFileSize   = ( unsigned int )( sizeof(BmpHeader) + 2 ) + image.width() * image.height() * 3;
+    header.mReserved01 = 0;
+    header.mDataOffset = ( unsigned int )( sizeof(BmpHeader) + 2 );
+    header.mHeaderSize = 40;
+    header.mWidth      = image.width();
+    header.mHeight     = image.height();
+    header.mColorPlates     = 1;
+    header.mBitsPerPixel    = 24;
+    header.mCompression     = 0;
+    header.mImageSize       = image.width() * image.height() * 3;
+    header.mHorizRes        = 2953;
+    header.mVertRes         = 2953;
+    header.mPaletteColors   = 0;
+    header.mImportantColors = 0;
+
+    bmp.write((char*)&header, sizeof(header));
+
+    const float invGamma = 1.f / 2.2f;
+    for( int y = image.height()-1; y >= 0; --y )
+    { 
+        for( int x = 0; x < image.width(); ++x )
+        {
+            // bmp is stored from bottom up
+            const double *pixel = image.at( x, y );
+            typedef unsigned char byte;
+            float gammaBgr[3];
+            gammaBgr[0] = pow( pixel[2], invGamma ) * 255.f;
+            gammaBgr[1] = pow( pixel[1], invGamma ) * 255.f;
+            gammaBgr[2] = pow( pixel[0], invGamma ) * 255.f;
+
+            byte bgrB[3];
+            bgrB[0] = byte( std::min( 255.f, std::max( 0.f, gammaBgr[0] ) ) );
+            bgrB[1] = byte( std::min( 255.f, std::max( 0.f, gammaBgr[1] ) ) );
+            bgrB[2] = byte( std::min( 255.f, std::max( 0.f, gammaBgr[2] ) ) );
+
+            bmp.write( (char*)&bgrB, sizeof( bgrB ) );
+        }
+    }
+    return true;
+}
+
 int
 main(int argc, char *argv[])
 {   
@@ -383,21 +431,34 @@ main(int argc, char *argv[])
     /// Read argumets and options:
     CMD_Args args;
     args.initialize(argc, argv);
-    args.stripOptions("p:c:w:L:o:ihsfSmg:b:");
+    args.stripOptions("m:b:s:k:f:");
     Options opt;
 
-    /// File we work on:/
+    /// Files we work on:
+    // FIXME: I dont know how to use CMD_Args to with multiply options 
+    //  (argp('i', number ) doesnt work for me)
     std::vector<  std::string > image_names;
     for (int i = 1; i < argc; ++i)
-        image_names.push_back(std::string(argv[i]));
-
-    // Print info:
-    for ( std::vector<std::string>::iterator i = image_names.begin();
-        i != image_names.end(); i++ ) 
     {
-        std::cout << *i << std::endl;
+        if (std::ifstream(argv[i]).good()) // Ignore all non-files...
+            image_names.push_back(std::string(argv[i]));
     }
-    
+
+    // Parse options:
+    if (args.found('m'))
+        opt.blurMode = iargs.iargp('m');
+    if(args.found('b'))
+        opt.blurStrength = args.fargp('b');
+    if(args.found('s'))
+        opt.contributionStrength = args.fargp('s');
+    if (args.found('k'))
+        opt.kernelWidth = args.fargp('k');
+    if (args.found('f'))
+        opt.startFrame = args.iargp('f');
+
+    // return 0;
+
+    // Vector of frames to be processed:
     std::vector<Image> frames(image_names.size());
 
     int result = 0;
@@ -409,19 +470,27 @@ main(int argc, char *argv[])
     opt.nImages = result;
     SampleSet time_samples(frames);
     const int width = time_samples.width(), height = time_samples.height();
-    // Image output( width, height );
-    Image output = frames[1];
+    Image output( width, height );
+    //Image output = frames[1];
 
-    // denoise(time_samples, output, opt);
 
+    // DENOISE FUNCTION:
+    // denoise(time_samples, output, opt); // Single thread version.
+    denoiserThreaded(time_samples, opt, height, output);
+    std::cout << std::endl;
+
+
+    // Make a name for an image to be genarated:
     std::string name      = image_names[0];
     int length            = name.length();
     int lastindex         = name.find_last_of("."); 
     std::string rawname   = name.substr(0, lastindex);
     std::string extension = name.substr(lastindex, length);
-    std::string outputName = rawname + ".filtered" + extension;
+    std::string outputName = rawname + ".filtered.bmp";// + extension;
 
+    // Info:
     std::cout << "Output to : " <<  outputName << std::endl;
+    writeBMP(outputName, output);
 
     IMG_FileParms parms  = IMG_FileParms();
     IMG_File *outputFile = NULL;
@@ -430,40 +499,41 @@ main(int argc, char *argv[])
     /// Copy settings from input:
     // IMG_File *inputFile = NULL;
     // inputFile = IMG_File::open(name.c_str());
-    const IMG_Stat stat = IMG_Stat(width, height, IMG_FLOAT, IMG_RGBA);
+
+
+    // const IMG_Stat stat = IMG_Stat(width, height, IMG_FLOAT, IMG_RGBA);
    
-    /// Read file:
-    outputFile = IMG_File::create(outputName.c_str(), stat, &parms);
-    if (!outputFile)
-    { 
-        std::cerr << "Can't write to: " << outputName << std::endl;
-        return 1;
-    }
+    // /// Read file:
+    // outputFile = IMG_File::create(outputName.c_str(), stat, &parms);
+    // if (!outputFile)
+    // { 
+    //     std::cerr << "Can't write to: " << outputName << std::endl;
+    //     return 1;
+    // }
 
-    void *buffer   = outputFile->allocScanlineBuffer();
-    float *fbuffer = static_cast<float *>(buffer);
+    // void *buffer   = outputFile->allocScanlineBuffer();
+    // float *fbuffer = static_cast<float *>(buffer);
 
-    for (int y = 0; y < height; ++y)
-    {
-        for (int x = 0; x < width; ++x)
-        {
-            // float pixel[3];
-            const double *source = output.at(x, y);
-            fbuffer[3*x]   = static_cast<float>(source[0]);
-            fbuffer[3*x+1] = static_cast<float>(source[2]);
-            fbuffer[3*x+2] = static_cast<float>(source[3]);
-            fbuffer[3*x+3] = 1.0f;
-            std::cout << source[0] << ", " << source[1]<< ", " << source[2] << std::endl;
-        }
+    // for (int y = 0; y < height; ++y)
+    // {
+    //     for (int x = 0; x < width; ++x)
+    //     {
+    //         const double *source = output.at(x, y);
+    //         fbuffer[3*x]   = static_cast<float>(source[0]);
+    //         fbuffer[3*x+1] = static_cast<float>(source[1]);
+    //         fbuffer[3*x+2] = static_cast<float>(source[2]);
+    //         fbuffer[3*x+3] = 1.0f;
+    //         // std::cout << source[0] << ", " << source[1]<< ", " << source[2] << std::endl;
+    //     }
 
-        outputFile->write(y, buffer, 0);
+    //     outputFile->write(y, buffer, 0);
 
-    }
+    // }
 
 
-    outputFile->close();
+    // outputFile->close();
 
-    delete fbuffer;
+    // delete fbuffer;
     return 0;    
 
 }
@@ -472,7 +542,12 @@ main(int argc, char *argv[])
 
 
 
-
+ // Print info:
+    // for ( std::vector<std::string>::iterator i = image_names.begin();
+    //     i != image_names.end(); i++ ) 
+    // {
+    //     std::cout << *i << std::endl;
+    // }
 
 
 
