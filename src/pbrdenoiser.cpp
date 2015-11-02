@@ -14,6 +14,7 @@
 
 // std:
 #include <string.h>
+#include <time.h>
 
 // Self:
 #include "pbrdenoiser.hpp"
@@ -446,7 +447,7 @@ main(int argc, char *argv[])
 
     // Parse options:
     if (args.found('m'))
-        opt.blurMode = iargs.iargp('m');
+        opt.blurMode = args.iargp('m');
     if(args.found('b'))
         opt.blurStrength = args.fargp('b');
     if(args.found('s'))
@@ -476,8 +477,11 @@ main(int argc, char *argv[])
 
     // DENOISE FUNCTION:
     // denoise(time_samples, output, opt); // Single thread version.
+    Timer c = Timer();
+    c.start();
     denoiserThreaded(time_samples, opt, height, output);
     std::cout << std::endl;
+    std::cout << "Denoising finished in " << c.current() << " seconds." << std::endl;
 
 
     // Make a name for an image to be genarated:
