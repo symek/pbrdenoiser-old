@@ -219,13 +219,14 @@ void me()
 void usage()
 {
     me();   
-    std::cout<< "Usage: pbrdenoiser [options] /path/image.[1-5].ext" << std::endl;
-    std::cout<< "options:" << std::endl;
+    std::cout<< "\tUsage: pbrdenoiser [options] /path/image.[1-5].ext" << std::endl;
+    std::cout<< "\toptions:" << std::endl;
     std::cout<< "\t -m      Blur mode (0 agressive (default), 1 gentle)." << std::endl;
     std::cout<< "\t -b      Blur strength (default 0.005)." << std::endl;
     std::cout<< "\t -s      Contribution strength (default 5)." << std::endl;
     std::cout<< "\t -k      Kernel width (default 7)." << std::endl;
-    std::cout<< "\t -f      Current frame (default 0 - first frame of provided sequence)." << std::endl << std::endl;
+    std::cout<< "\t -f      Current frame (default 0 - first frame of provided sequence)." << std::endl;
+    std::cout<< "\t -p      Plane to process (default C)." << std::endl << std::endl;
 }
 
 

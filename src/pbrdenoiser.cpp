@@ -182,7 +182,7 @@ SampleSet::SampleSet( const std::vector< Image > &images ) :
 }
 
 
-int read_image(const std::string &inputName, Image &image)
+int read_image(const std::string &inputName, const std::string &plane_name, Image &image)
 {
     // Optional read parameters:
     IMG_FileParms parms = IMG_FileParms();
@@ -204,7 +204,7 @@ int read_image(const std::string &inputName, Image &image)
     /// Under this line all routines will require myData
     UT_PtrArray<PXL_Raster *> images; // arrays of rasters
     bool       loaded        = false; // did we load the file
-    const char *plane_name   = "C"  ; // default raster name
+    // const char *plane_name   = "C"  ; // default raster name
     PXL_Raster *raster       = NULL;  // working raster 
     void       *myData       = NULL;  // data ready to be casted
     int         npix         = 0;  
@@ -221,7 +221,7 @@ int read_image(const std::string &inputName, Image &image)
         std::cout << "Integrity : Ok" << std::endl;
         // TODO: default C could not exists!
         // Look for it, and choose diffrent if neccesery
-        int px = stat.getPlaneIndex(plane_name);
+        int px = stat.getPlaneIndex(plane_name.c_str());
         if (px != -1)
         {
             raster  = images(px);
@@ -431,8 +431,9 @@ main(int argc, char *argv[])
   
     /// Read argumets and options:
     CMD_Args args;
+    std::string plane = "C";
     args.initialize(argc, argv);
-    args.stripOptions("m:b:s:k:f:");
+    args.stripOptions("m:b:s:k:f:p:");
     Options opt;
 
     /// Files we work on:
@@ -456,6 +457,8 @@ main(int argc, char *argv[])
         opt.kernelWidth = args.fargp('k');
     if (args.found('f'))
         opt.startFrame = args.iargp('f');
+    if (args.found('p'))
+        plane = std::string(args.argp('p'));
 
     // return 0;
 
@@ -465,7 +468,7 @@ main(int argc, char *argv[])
     int result = 0;
     for (int i = 0; i < image_names.size(); ++i)
     {
-        result += read_image(image_names[i], frames[i]);
+        result += read_image(image_names[i], plane, frames[i]);
     }
 
     opt.nImages = result;
