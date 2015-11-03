@@ -7,6 +7,7 @@
 #include <UT/UT_PtrArray.h>
 #include <PXL/PXL_Raster.h>
 #include <UT/UT_String.h>
+#include <tbb/task_scheduler_init.h>
 
 // Houdini version info
 #include <SYS/SYS_Version.h>
@@ -380,13 +381,18 @@ void denoise(SampleSet &set, Image &result, Options &opt)
 int
 main(int argc, char *argv[])
 {   
+    // Profiling timer:
+    Timer c = Timer();
     /// No options? Exit:  
     if (argc == 1)
     {
         usage();
         return 0;
     }
-  
+ 
+    int nthreads = tbb::task_scheduler_init::default_num_threads();
+    std::cout << "Working with: " << nthreads << " threads." << std::endl;
+
     /// Read argumets and options:
     CMD_Args args;
     std::string plane = "C";
@@ -429,20 +435,27 @@ main(int argc, char *argv[])
         result += read_image(image_names[i], plane, frames[i]);
     }
 
+    // How many frames we opened:
     opt.nImages = result;
+
+    // Start from building SampleSet:
+    c.start();
     SampleSet time_samples(frames);
+    std::cout << "Building set: " << c.current() << " seconds." << std::endl;
+    // This will hold output to be copined back to working place later on:
     const int width = time_samples.width(), height = time_samples.height();
     Image output( width, height );
-    //Image output = frames[1];
-
-
+    
     // DENOISE FUNCTION:
-    // denoise(time_samples, output, opt); // Single thread version.
-    Timer c = Timer();
     c.start();
-    denoiserThreaded(time_samples, opt, height, output);
+    # ifdef NO_THREADING
+        denoise(time_samples, output, opt); // Single thread version.
+    #else
+        denoiserThreaded(time_samples, opt, height, output);
+    #endif
+
     std::cout << std::endl;
-    std::cout << "Denoising finished in " << c.current() << " seconds." << std::endl;
+    std::cout << "Denoising finished in " << c.current() / nthreads << " seconds." << std::endl;
 
 
     // Make a name for an image to be genarated:
@@ -455,30 +468,30 @@ main(int argc, char *argv[])
 
     // Info:
     std::cout << "Output to : " <<  outputName << std::endl;
-    // writeBMP(outputName, output);
 
-
-    /* EXPORTING RASTER TO FILE */
+    /* ---- EXPORTING RASTER TO FILE ---- */
     IMG_FileParms parms = IMG_FileParms();
-    parms.setDataType(IMG_FLOAT);
-    IMG_File *inputFile = IMG_File::open(name.c_str(), &parms);// 'name' is our working frame atm.
+    parms.setDataType(IMG_FLOAT); // Readin conversion to float
+    IMG_File *inputFile = IMG_File::open(name.c_str(), &parms); // 'name' is our working frame atm.
     static const IMG_Stat &stat = inputFile->getStat();
                  IMG_Stat ostat = IMG_Stat(stat);
-    
     UT_PtrArray<PXL_Raster *> images; // arrays of rasters
     PXL_Raster *raster   = NULL;  // working raster 
     bool loaded  = inputFile->readImages(images);
-    // this shouldn't happend as we already opened that file...
-    if (!loaded)
-        return 1;
-    // This also shoulnd't happen as plane was already found in read_images()...
-    int px = stat.getPlaneIndex(plane.c_str());
-    if (px != -1)
-        raster  = images(px);
-    else
+
     {
-        std::cerr << "No raster :" << plane << std::endl;
-        return 1;
+        // this shouldn't happend as we already opened that file...
+        if (!loaded) 
+            return 1;
+        // This also shoulnd't happen as plane was already found in read_images()...
+        int px = stat.getPlaneIndex(plane.c_str());
+        if (px != -1)
+            raster  = images(px);
+        else
+        {
+            std::cerr << "No raster :" << plane << std::endl;
+            return 1;
+        }
     }
 
     // Copy data back to raster of intereset...
@@ -499,14 +512,16 @@ main(int argc, char *argv[])
         }
     }
 
-    // output file should be a copy of working frame with modified raster:
+
+    // OutputFile should be a copy of working frame with modified raster:
     ostat.setFilename(outputName.c_str());
-    parms.setDataType(IMG_HALF);
+    parms.setDataType(IMG_HALF); // Back to half when possible.
     IMG_File *outputFile = IMG_File::create(outputName.c_str(), (const IMG_Stat)ostat, &parms);
+
+    // End
     if (outputFile)
         outputFile->writeImages(images);
     else
         return 1;
     return 0;    
-
 }
