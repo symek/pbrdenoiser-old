@@ -436,7 +436,7 @@ main(int argc, char *argv[])
     args.stripOptions("m:b:s:k:f:p:");
     Options opt;
 
-    /// Files we work on:
+    // Files we work on:
     // FIXME: I dont know how to use CMD_Args to with multiply options 
     //  (argp('i', number ) doesnt work for me)
     std::vector<  std::string > image_names;
@@ -488,172 +488,59 @@ main(int argc, char *argv[])
 
 
     // Make a name for an image to be genarated:
-    std::string name      = image_names[0];
+    std::string name      = image_names[opt.startFrame];
     int length            = name.length();
     int lastindex         = name.find_last_of("."); 
     std::string rawname   = name.substr(0, lastindex);
     std::string extension = name.substr(lastindex, length);
-    std::string outputName = rawname + ".filtered.bmp";// + extension;
+    std::string outputName = rawname + ".filtered" + extension;
 
     // Info:
     std::cout << "Output to : " <<  outputName << std::endl;
-    writeBMP(outputName, output);
-
-    IMG_FileParms parms  = IMG_FileParms();
-    IMG_File *outputFile = NULL;
-
-   
-    /// Copy settings from input:
-    // IMG_File *inputFile = NULL;
-    // inputFile = IMG_File::open(name.c_str());
+    // writeBMP(outputName, output);
 
 
-    // const IMG_Stat stat = IMG_Stat(width, height, IMG_FLOAT, IMG_RGBA);
-   
-    // /// Read file:
-    // outputFile = IMG_File::create(outputName.c_str(), stat, &parms);
-    // if (!outputFile)
-    // { 
-    //     std::cerr << "Can't write to: " << outputName << std::endl;
-    //     return 1;
-    // }
+    /* EXPORTING RASTER TO FILE */
+    IMG_FileParms parms = IMG_FileParms();
+    IMG_File *inputFile = IMG_File::open(name.c_str());// 'name' is our working frame atm.
+    static const IMG_Stat &stat = inputFile->getStat();
+                 IMG_Stat ostat = IMG_Stat(stat);
+    
+    UT_PtrArray<PXL_Raster *> images; // arrays of rasters
+    PXL_Raster *raster   = NULL;  // working raster 
+    bool loaded  = inputFile->readImages(images);
+    // this shouldn't happend as we already opened that file...
+    if (!loaded)
+        return 1;
+    // This also shoulnd't happen as plane was already found in read_images()...
+    int px = stat.getPlaneIndex(plane.c_str());
+    if (px != -1)
+        raster  = images(px);
+    else
+    {
+        std::cerr << "No raster :" << plane << std::endl;
+        return 1;
+    }
 
-    // void *buffer   = outputFile->allocScanlineBuffer();
-    // float *fbuffer = static_cast<float *>(buffer);
+    // Copy data back to raster of intereset...
+    for (int y = 0; y < height; ++y)
+    {
+        for (int x = 0; x < width; ++x)
+        {
+            float pixel[3];
+            const double *source = output.at(x, y);
+            for(int i = 0; i < 3; ++i) pixel[i] =  static_cast<float>(source[i]);
+            raster->setPixelValue(x, y, pixel);
+        }
+    }
 
-    // for (int y = 0; y < height; ++y)
-    // {
-    //     for (int x = 0; x < width; ++x)
-    //     {
-    //         const double *source = output.at(x, y);
-    //         fbuffer[3*x]   = static_cast<float>(source[0]);
-    //         fbuffer[3*x+1] = static_cast<float>(source[1]);
-    //         fbuffer[3*x+2] = static_cast<float>(source[2]);
-    //         fbuffer[3*x+3] = 1.0f;
-    //         // std::cout << source[0] << ", " << source[1]<< ", " << source[2] << std::endl;
-    //     }
-
-    //     outputFile->write(y, buffer, 0);
-
-    // }
-
-
-    // outputFile->close();
-
-    // delete fbuffer;
+    // output file should be a copy of working frame with modified raster:
+    ostat.setFilename(outputName.c_str());
+    IMG_File *outputFile = IMG_File::create(outputName.c_str(), (const IMG_Stat)ostat);
+    if (outputFile)
+        outputFile->writeImages(images);
+    else
+        return 1;
     return 0;    
 
 }
-
-
-
-
-
- // Print info:
-    // for ( std::vector<std::string>::iterator i = image_names.begin();
-    //     i != image_names.end(); i++ ) 
-    // {
-    //     std::cout << *i << std::endl;
-    // }
-
-
-
-
-
-
-
-
-
-
-
-
-
-    
-    // /// Switch working plane if requested 
-    // if (args.found('p')) 
-    // {
-    //     plane_name = args.argp('p');
-    //     std::cout << "Work plane: " << plane_name << std::endl;
-    // }
-
-    // /// 'Integrity check' basicaly means we try to load 
-    // /// the file into memory: fail == it's broken.      
-    // if (args.found('i') || args.found('h') || args.found('s') ||
-    //     args.found('c') || args.found('w') || args.found('f'))
-    // {
-    //     loaded = inputFile->readImages(images);
-    //     if (!loaded)
-    //     {
-    //         std << "Integrity : Fail" << std::endl;
-    //         return 1;
-    //     } 
-    //     else 
-    //     {
-    //         cout << "Integrity : Ok" << std::endl;
-    //         // TODO: default C could not exists!
-    //         // Look for it, and choose diffrent if neccesery
-    //         int px = stat.getPlaneIndex(plane_name);
-    //         if (px != -1)
-    //         {
-    //             raster  = images(px);
-    //             myData  = raster->getPixels();
-    //             npix    = raster->getNumPixels();
-    //         }
-    //         else
-    //         {
-    //             cerr << "No raster :" << plane_name << std::endl;
-    //             return 1;
-    //         }
-    //     }
-    // }
-
-    
-
-    // /// Print statistics and optionally fix nans/infs: 
-    // /// FIXME: fix doesn't work yet.
-    // if (args.found('s') || args.found('f'))
-    // {
-    //     /// I'm acctually reloading the image with 32float,
-    //     //float *fpixels;
-    //     myData = printStats(inputName, plane_name,  args.found('f'));
-    // }
-    
-    // /// Meta data:
-    // if (args.found('m'))
-    // {
-    //     UT_String info = "";
-    //     inputFile->getAdditionalInfo(info);
-    //     cout << info.buffer()  << std::endl;
-    // }
-
-    // if (args.found('o'))
-    // {
-    //     const char *outputName = NULL;
-    //     outputName = args.argp('o');
-    //     if (outputName)
-    //         inputFile->copyToFile(inputName, outputName, parms);
-
-    // }
-
-
-
-
-
- //    if (args.found('L'))
- //    {
- //        lut_file = args.argp('L');
- //        if (lut_file)
- //             parms->applyLUT(lut_file, "C");
- //    }
- //    // Gamma:
- //    if (args.found('g'))
- //    {
- //        const char *gamma = args.argp('g');
- //        parms->applyGamma(atof(gamma), "C");
- //    }
- //    // Bit depth:
- //    if (args.found('b'))
- //    {
- //        const char *bitdepth = args.argp('b');
- //        parms->setDataType(getDataType(atoi(bitdepth)));
- //    }
