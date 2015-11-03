@@ -265,118 +265,15 @@ int read_image(const std::string &inputName, const std::string &plane_name, Imag
 }
 
 
-void denoise(SampleSet &set, Image &result, Options &opt)
+void getPlaneNames(std::string &tokens, std::vector<std::string> &planeNames)
 {
-    //===================================================================
-    // The algorithm.
-    //===================================================================
-
-
-    const int width = set.width(), height = set.height();
-
-    int kernelRadius = opt.kernelWidth > 1 ? ( opt.kernelWidth - 1 ) / 2 : 0;
-    std::vector< double > srcSamples;
-    for( int y = 0; y < height; ++y )
+    std::istringstream stream(tokens);
+    std::string token;
+    while(std::getline(stream, token, ',')) 
     {
-        for( int x = 0; x < width; ++x )
-        {
-            fprintf(stderr,"\rFiltering %5.2f%% complete.", 100. * y / ( height-1 ) );
-        
-            // Loop over each channel.  
-            for( unsigned int c = 0; c < 3; ++c )
-            {
-                double destMean = set.mean( x, y, c );
-                double destDeviation = set.deviation( x, y, c );
-                double destVariation = set.variance( x, y, c );
-                double destRange = set.max( x, y, c ) - set.min( x, y, c ); 
-
-                // Loop over the neighbouring pixels.
-                double weightedSum = 0.;
-                double v = 0.;
-                for( int ky = -kernelRadius; ky <= kernelRadius; ++ky )
-                {
-                    for( int kx = -kernelRadius; kx <= kernelRadius; ++kx )
-                    {
-                        // Don't include the pixel being sampled in our calculations as we are
-                        // summing the deviations from it and doing so will bias our results.
-                        if( ky == 0 && kx == 0 )
-                        {
-                            continue;
-                        }
-
-                        // Gather information on the source pixel's samples.
-                        srcSamples = set.samples( x + kx, y + ky, c );
-                        double srcMin = set.min( x + kx, y + ky, c );
-                        double srcMax = set.max( x + kx, y + ky, c );
-                        double srcMean = set.mean( x + kx, y + ky, c );
-                        double srcDeviation = set.deviation( x + kx, y + ky, c );
-                        double srcVariation = set.variance( x + kx, y + ky, c );
-                        double srcRange = set.max( x + kx, y + ky, c ) - set.min( x + kx, y + ky, c ); 
-                        
-                        if( srcVariation == 0 && srcSamples[0] == 0. ) continue;
-                            
-                        // A gaussian falloff that weights contributing samples which are closer to the pixel being filtered higher.
-                        /// \todo Intuitive falloff parameters need to be added to the distance weight or at least a suitable curve found.
-                        double distanceWeight = gaussian( sqrt( kx*kx + ky*ky ) / sqrt( kernelRadius*kernelRadius + kernelRadius*kernelRadius ), 0., .7, false );
-                            
-                        // Similarity weight.
-                        // This weight defines a measure of how similar the set of contributing samples is to the pixel being filtered.
-                        // By itself it will produce a smart blur of sorts which is then attenuated by the variance of the source samples in the process of weighted offsets.
-                        // Changing this value will effect how aggressive the filtering is.
-                        double similarity;
-                        if( opt.blurMode == Options::kAggressive )
-                        {
-                            similarity = ( srcMean - destMean ) * ( srcRange - destRange );
-                        }
-                        else
-                        {
-                            similarity = ( srcMean - destMean );
-                        }
-                        similarity *= similarity;
-
-                        // Temporal weight.
-                        // Weight the contribution using a function in the range of 0-1 which weights the importance of the
-                        // contributing sample according to how close it is in time to the current time.
-                        double time = 1.; // \todo: implement this! Example functions are Median, Gaussian, etc.
-
-                        // Loop over each of the neighbouring samples.
-                        for( unsigned int i = 0; i < srcSamples.size(); ++i )
-                        {
-                            // The contribution weight extends the range of allowed samples that can influence the pixel being filtered.
-                            // It is simply a scaler that increases the width of the bell curve that the samples are weighted against.
-                            double contribution = gaussian( srcSamples[i], destMean, destDeviation * ( 1 + opt.contributionStrength ) ) * gaussian( srcSamples[i], srcMean, srcDeviation );
-                            contribution = contribution * ( 1. - opt.blurStrength ) + opt.blurStrength;
-
-                            // This weight is a step function with a strong falloff close to the limits. However, it will never reach 0 so that the sample is not excluded.
-                            // By using this weight the dependency on the limiting samples is much less which reduces the effect of sparkling artefacts.
-                            double limitWeight = srcSamples.size() <= 2 ? 1. : softStep( srcSamples[i], srcMin, srcMax );
-                        
-                            // Combine the weights together and normalize to the range of 0-1.  
-                            double weight = pow( M_E, -( similarity / ( contribution * srcVariation * time * distanceWeight * limitWeight ) ) );
-                            weight = ( isnan( weight ) || isinf( weight ) ) ? 0. : weight;
-                        
-                            // Sum the offset.  
-                            v += ( srcSamples[i] - destMean ) * weight;
-
-                            // Sum the weight.
-                            weightedSum += weight;
-                        }
-                    }
-                }
-
-                if( weightedSum == 0. || destVariation <= 0. )
-                {
-                    result.writeable( x, y )[c] = destMean;
-                }
-                else
-                {
-                    result.writeable( x, y )[c] = destMean + ( v / weightedSum );
-                }
-            }
-        }
+        planeNames.push_back(token);
     }
 }
-
 
 int
 main(int argc, char *argv[])
@@ -395,7 +292,10 @@ main(int argc, char *argv[])
 
     /// Read argumets and options:
     CMD_Args args;
-    std::string plane = "C";
+    std::string plane_str = "C";            // Default working plane.
+    std::vector<std::string> planes_vector; // Planes vector in case user wants to filter > 1 plane
+    planes_vector.push_back(plane_str);     // dito
+
     args.initialize(argc, argv);
     args.stripOptions("m:b:s:k:f:p:");
     Options opt;
@@ -422,43 +322,13 @@ main(int argc, char *argv[])
     if (args.found('f'))
         opt.startFrame = args.iargp('f');
     if (args.found('p'))
-        plane = std::string(args.argp('p'));
-
-    // return 0;
-
-    // Vector of frames to be processed:
-    std::vector<Image> frames(image_names.size());
-
-    int result = 0;
-    for (int i = 0; i < image_names.size(); ++i)
     {
-        result += read_image(image_names[i], plane, frames[i]);
+        plane_str = std::string(args.argp('p'));
+        planes_vector.clear();
+        getPlaneNames(plane_str, planes_vector);
     }
 
-    // How many frames we opened:
-    opt.nImages = result;
-
-    // Start from building SampleSet:
-    c.start();
-    SampleSet time_samples(frames);
-    std::cout << "Building set: " << c.current() << " seconds." << std::endl;
-    // This will hold output to be copined back to working place later on:
-    const int width = time_samples.width(), height = time_samples.height();
-    Image output( width, height );
-    
-    // DENOISE FUNCTION:
-    c.start();
-    # ifdef NO_THREADING
-        denoise(time_samples, output, opt); // Single thread version.
-    #else
-        denoiserThreaded(time_samples, opt, height, output);
-    #endif
-
-    std::cout << std::endl;
-    std::cout << "Denoising finished in " << c.current() / nthreads << " seconds." << std::endl;
-
-
-    // Make a name for an image to be genarated:
+     // Make a name for an image to be genarated:
     std::string name      = image_names[opt.startFrame];
     int length            = name.length();
     int lastindex         = name.find_last_of("."); 
@@ -471,15 +341,48 @@ main(int argc, char *argv[])
 
     /* ---- EXPORTING RASTER TO FILE ---- */
     IMG_FileParms parms = IMG_FileParms();
-    parms.setDataType(IMG_FLOAT); // Readin conversion to float
+    parms.setDataType(IMG_FLOAT);                               // Readin conversion to float
     IMG_File *inputFile = IMG_File::open(name.c_str(), &parms); // 'name' is our working frame atm.
-    static const IMG_Stat &stat = inputFile->getStat();
-                 IMG_Stat ostat = IMG_Stat(stat);
-    UT_PtrArray<PXL_Raster *> images; // arrays of rasters
-    PXL_Raster *raster   = NULL;  // working raster 
-    bool loaded  = inputFile->readImages(images);
+    static const IMG_Stat &stat = inputFile->getStat();         // Source stats
+                 IMG_Stat ostat = IMG_Stat(stat);               // Copy source stat to be modfied.
+    UT_PtrArray<PXL_Raster *> images;                           // arrays of rasters we will copy our output onto.
+    PXL_Raster *raster          = NULL;                         // working raster         
 
+    // for every plane in planes_vector...
+
+    for (std::vector<std::string>::iterator i = planes_vector.begin();\
+        i != planes_vector.end(); ++i)
     {
+        std::string plane(*i);
+        // Vector of frames to be processed:
+        std::vector<Image> frames(image_names.size());
+        int result = 0;
+        for (int i = 0; i < image_names.size(); ++i)
+            result += read_image(image_names[i], plane, frames[i]);
+
+        // How many frames we opened:
+        opt.nImages = result;
+        // Start from building SampleSet:
+        c.start();
+        SampleSet time_samples(frames);
+        std::cout << "Building set for [" << plane << "] took " << c.current() << " seconds." << std::endl;
+        // This will hold output to be copined back to working place later on:
+        const int width = time_samples.width(), height = time_samples.height();
+        Image output( width, height );
+        
+        // DENOISE FUNCTION:
+        c.start();
+        # ifdef NO_THREADING
+            denoise(time_samples, output, opt); // Single thread version.
+        #else
+            denoiserThreaded(time_samples, opt, height, output);
+        #endif
+
+        std::cout << std::endl;
+        std::cout << "Denoising of [" << plane << "] finished in: " << c.current() / nthreads << " seconds." << std::endl;
+
+
+        bool loaded  = inputFile->readImages(images);        
         // this shouldn't happend as we already opened that file...
         if (!loaded) 
             return 1;
@@ -492,26 +395,27 @@ main(int argc, char *argv[])
             std::cerr << "No raster :" << plane << std::endl;
             return 1;
         }
-    }
+        
 
-    // Copy data back to raster of intereset...
-    for (int y = 0; y < height; ++y)
-    {
-        for (int x = 0; x < width; ++x)
+        // Copy data back to raster of intereset...
+        for (int y = 0; y < height; ++y)
         {
-            float pixel[3];
-            const double *source = output.at(x, y);
-            for(int i = 0; i < 3; ++i) pixel[i] =  static_cast<float>(source[i]);
-            #ifdef HOUDINI_14 // Houdini 14 doesn't have nice setPixelValue():
-                float *target = (float*)raster->getPixel(x, y, 0);
-                for(int i = 0; i < 3; ++i) 
-                    target[i] =  pixel[i];
-            #else
-                raster->setPixelValue(x, y, pixel);
-            #endif
+            for (int x = 0; x < width; ++x)
+            {
+                float pixel[3];
+                const double *source = output.at(x, y);
+                for(int i = 0; i < 3; ++i) pixel[i] =  static_cast<float>(source[i]);
+                #ifdef HOUDINI_14 // Houdini 14 doesn't have nice setPixelValue():
+                    float *target = (float*)raster->getPixel(x, y, 0);
+                    for(int i = 0; i < 3; ++i) 
+                        target[i] =  pixel[i];
+                #else
+                    raster->setPixelValue(x, y, pixel);
+                #endif
+            }
         }
-    }
 
+    }
 
     // OutputFile should be a copy of working frame with modified raster:
     ostat.setFilename(outputName.c_str());

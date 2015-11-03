@@ -405,6 +405,8 @@ denoiserThreaded(const SampleSet &set,  const Options &opt, const int height, Im
 {
    
     UTparallelFor(UT_BlockedRange<int64>(0, height), op_Denoiser(set, opt, output), 2, opt.kernelWidth*2);
+    // Debuger:
+    //UTserialFor(UT_BlockedRange<int64>(0, height), op_Denoiser(set, opt, output));
 }
 
 
@@ -429,3 +431,116 @@ class Timer
             return seconds >= current();
         }
 };
+
+
+void denoise(SampleSet &set, Image &result, Options &opt)
+{
+    //===================================================================
+    // The algorithm.
+    //===================================================================
+
+
+    const int width = set.width(), height = set.height();
+
+    int kernelRadius = opt.kernelWidth > 1 ? ( opt.kernelWidth - 1 ) / 2 : 0;
+    std::vector< double > srcSamples;
+    for( int y = 0; y < height; ++y )
+    {
+        for( int x = 0; x < width; ++x )
+        {
+            fprintf(stderr,"\rFiltering %5.2f%% complete.", 100. * y / ( height-1 ) );
+        
+            // Loop over each channel.  
+            for( unsigned int c = 0; c < 3; ++c )
+            {
+                double destMean = set.mean( x, y, c );
+                double destDeviation = set.deviation( x, y, c );
+                double destVariation = set.variance( x, y, c );
+                double destRange = set.max( x, y, c ) - set.min( x, y, c ); 
+
+                // Loop over the neighbouring pixels.
+                double weightedSum = 0.;
+                double v = 0.;
+                for( int ky = -kernelRadius; ky <= kernelRadius; ++ky )
+                {
+                    for( int kx = -kernelRadius; kx <= kernelRadius; ++kx )
+                    {
+                        // Don't include the pixel being sampled in our calculations as we are
+                        // summing the deviations from it and doing so will bias our results.
+                        if( ky == 0 && kx == 0 )
+                        {
+                            continue;
+                        }
+
+                        // Gather information on the source pixel's samples.
+                        srcSamples = set.samples( x + kx, y + ky, c );
+                        double srcMin = set.min( x + kx, y + ky, c );
+                        double srcMax = set.max( x + kx, y + ky, c );
+                        double srcMean = set.mean( x + kx, y + ky, c );
+                        double srcDeviation = set.deviation( x + kx, y + ky, c );
+                        double srcVariation = set.variance( x + kx, y + ky, c );
+                        double srcRange = set.max( x + kx, y + ky, c ) - set.min( x + kx, y + ky, c ); 
+                        
+                        if( srcVariation == 0 && srcSamples[0] == 0. ) continue;
+                            
+                        // A gaussian falloff that weights contributing samples which are closer to the pixel being filtered higher.
+                        /// \todo Intuitive falloff parameters need to be added to the distance weight or at least a suitable curve found.
+                        double distanceWeight = gaussian( sqrt( kx*kx + ky*ky ) / sqrt( kernelRadius*kernelRadius + kernelRadius*kernelRadius ), 0., .7, false );
+                            
+                        // Similarity weight.
+                        // This weight defines a measure of how similar the set of contributing samples is to the pixel being filtered.
+                        // By itself it will produce a smart blur of sorts which is then attenuated by the variance of the source samples in the process of weighted offsets.
+                        // Changing this value will effect how aggressive the filtering is.
+                        double similarity;
+                        if( opt.blurMode == Options::kAggressive )
+                        {
+                            similarity = ( srcMean - destMean ) * ( srcRange - destRange );
+                        }
+                        else
+                        {
+                            similarity = ( srcMean - destMean );
+                        }
+                        similarity *= similarity;
+
+                        // Temporal weight.
+                        // Weight the contribution using a function in the range of 0-1 which weights the importance of the
+                        // contributing sample according to how close it is in time to the current time.
+                        double time = 1.; // \todo: implement this! Example functions are Median, Gaussian, etc.
+
+                        // Loop over each of the neighbouring samples.
+                        for( unsigned int i = 0; i < srcSamples.size(); ++i )
+                        {
+                            // The contribution weight extends the range of allowed samples that can influence the pixel being filtered.
+                            // It is simply a scaler that increases the width of the bell curve that the samples are weighted against.
+                            double contribution = gaussian( srcSamples[i], destMean, destDeviation * ( 1 + opt.contributionStrength ) ) * gaussian( srcSamples[i], srcMean, srcDeviation );
+                            contribution = contribution * ( 1. - opt.blurStrength ) + opt.blurStrength;
+
+                            // This weight is a step function with a strong falloff close to the limits. However, it will never reach 0 so that the sample is not excluded.
+                            // By using this weight the dependency on the limiting samples is much less which reduces the effect of sparkling artefacts.
+                            double limitWeight = srcSamples.size() <= 2 ? 1. : softStep( srcSamples[i], srcMin, srcMax );
+                        
+                            // Combine the weights together and normalize to the range of 0-1.  
+                            double weight = pow( M_E, -( similarity / ( contribution * srcVariation * time * distanceWeight * limitWeight ) ) );
+                            weight = ( isnan( weight ) || isinf( weight ) ) ? 0. : weight;
+                        
+                            // Sum the offset.  
+                            v += ( srcSamples[i] - destMean ) * weight;
+
+                            // Sum the weight.
+                            weightedSum += weight;
+                        }
+                    }
+                }
+
+                if( weightedSum == 0. || destVariation <= 0. )
+                {
+                    result.writeable( x, y )[c] = destMean;
+                }
+                else
+                {
+                    result.writeable( x, y )[c] = destMean + ( v / weightedSum );
+                }
+            }
+        }
+    }
+}
