@@ -377,53 +377,6 @@ void denoise(SampleSet &set, Image &result, Options &opt)
 }
 
 
-
-bool writeBMP( const std::string &path, const Image &image )
-{
-    std::ofstream bmp( path.c_str(), std::ios::binary );
-    BmpHeader header;
-    bmp.write("BM", 2);
-    header.mFileSize   = ( unsigned int )( sizeof(BmpHeader) + 2 ) + image.width() * image.height() * 3;
-    header.mReserved01 = 0;
-    header.mDataOffset = ( unsigned int )( sizeof(BmpHeader) + 2 );
-    header.mHeaderSize = 40;
-    header.mWidth      = image.width();
-    header.mHeight     = image.height();
-    header.mColorPlates     = 1;
-    header.mBitsPerPixel    = 24;
-    header.mCompression     = 0;
-    header.mImageSize       = image.width() * image.height() * 3;
-    header.mHorizRes        = 2953;
-    header.mVertRes         = 2953;
-    header.mPaletteColors   = 0;
-    header.mImportantColors = 0;
-
-    bmp.write((char*)&header, sizeof(header));
-
-    const float invGamma = 1.f / 2.2f;
-    for( int y = image.height()-1; y >= 0; --y )
-    { 
-        for( int x = 0; x < image.width(); ++x )
-        {
-            // bmp is stored from bottom up
-            const double *pixel = image.at( x, y );
-            typedef unsigned char byte;
-            float gammaBgr[3];
-            gammaBgr[0] = pow( pixel[2], invGamma ) * 255.f;
-            gammaBgr[1] = pow( pixel[1], invGamma ) * 255.f;
-            gammaBgr[2] = pow( pixel[0], invGamma ) * 255.f;
-
-            byte bgrB[3];
-            bgrB[0] = byte( std::min( 255.f, std::max( 0.f, gammaBgr[0] ) ) );
-            bgrB[1] = byte( std::min( 255.f, std::max( 0.f, gammaBgr[1] ) ) );
-            bgrB[2] = byte( std::min( 255.f, std::max( 0.f, gammaBgr[2] ) ) );
-
-            bmp.write( (char*)&bgrB, sizeof( bgrB ) );
-        }
-    }
-    return true;
-}
-
 int
 main(int argc, char *argv[])
 {   
