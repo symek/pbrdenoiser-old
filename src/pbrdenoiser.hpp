@@ -404,7 +404,7 @@ void
 denoiserThreaded(const SampleSet &set,  const Options &opt, const int height, Image &output)
 {
    
-    UTparallelFor(UT_BlockedRange<int64>(0, height), op_Denoiser(set, opt, output), 2, 16);
+    UTparallelFor(UT_BlockedRange<int64>(0, height), op_Denoiser(set, opt, output), 2, opt.kernelWidth*2);
 }
 
 
