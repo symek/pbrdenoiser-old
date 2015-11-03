@@ -8,6 +8,12 @@
 #include <PXL/PXL_Raster.h>
 #include <UT/UT_String.h>
 
+// Houdini version info
+#include <SYS/SYS_Version.h>
+#if SYS_VERSION_MAJOR_INT == 14
+#define HOUDINI_14
+#endif
+
 // std cmath (to consider for isnan() and isinf())
 #include <cmath>
 #include <fstream>
@@ -18,7 +24,6 @@
 
 // Self:
 #include "pbrdenoiser.hpp"
-#define UT_MAX_OPTIONS 24
 
 Image::Image( int w, int h )
 {
@@ -502,7 +507,8 @@ main(int argc, char *argv[])
 
     /* EXPORTING RASTER TO FILE */
     IMG_FileParms parms = IMG_FileParms();
-    IMG_File *inputFile = IMG_File::open(name.c_str());// 'name' is our working frame atm.
+    parms.setDataType(IMG_FLOAT);
+    IMG_File *inputFile = IMG_File::open(name.c_str(), &parms);// 'name' is our working frame atm.
     static const IMG_Stat &stat = inputFile->getStat();
                  IMG_Stat ostat = IMG_Stat(stat);
     
@@ -530,13 +536,20 @@ main(int argc, char *argv[])
             float pixel[3];
             const double *source = output.at(x, y);
             for(int i = 0; i < 3; ++i) pixel[i] =  static_cast<float>(source[i]);
-            raster->setPixelValue(x, y, pixel);
+            #ifdef HOUDINI_14 // Houdini 14 doesn't have nice setPixelValue():
+                float *target = (float*)raster->getPixel(x, y, 0);
+                for(int i = 0; i < 3; ++i) 
+                    target[i] =  pixel[i];
+            #else
+                raster->setPixelValue(x, y, pixel);
+            #endif
         }
     }
 
     // output file should be a copy of working frame with modified raster:
     ostat.setFilename(outputName.c_str());
-    IMG_File *outputFile = IMG_File::create(outputName.c_str(), (const IMG_Stat)ostat);
+    parms.setDataType(IMG_HALF);
+    IMG_File *outputFile = IMG_File::create(outputName.c_str(), (const IMG_Stat)ostat, &parms);
     if (outputFile)
         outputFile->writeImages(images);
     else
