@@ -26,6 +26,7 @@
 // Self:
 #include "pbrdenoiser.hpp"
 
+
 Image::Image( int w, int h )
 {
     resize( w, h );
@@ -284,7 +285,7 @@ main(int argc, char *argv[])
     }
  
     int nthreads = tbb::task_scheduler_init::default_num_threads();
-    std::cout << "Working with: " << nthreads << " threads." << std::endl;
+    std::cout << "Threading : " << nthreads << " threads." << std::endl;
 
     /// Read argumets and options:
     CMD_Args args;
@@ -337,9 +338,6 @@ main(int argc, char *argv[])
     std::string extension = name.substr(lastindex, length);
     std::string outputName = rawname + ".filtered" + extension;
 
-    // Info:
-    std::cout << "Output to : " <<  outputName << std::endl;
-
     /* ---- EXPORTING RASTER TO FILE ---- */
     IMG_FileParms parms = IMG_FileParms();
     parms.setDataType(IMG_FLOAT);                               // Readin conversion to float
@@ -359,10 +357,10 @@ main(int argc, char *argv[])
         if (result != image_names.size())
         {
             vel_plane_str = ""; // turn off if not all files have motion vectors.
-            std::cerr << "Can't apply motion vectors. Some/all files are missing velocity plane." << std::endl;
+            std::cerr << "\t[ERROR] Can't apply motion vectors. Some/all files are missing velocity plane." << std::endl;
         }
         else
-            std::cout << "Applying motion vectors." << std::endl;
+            std::cout << "MotionBias: Yes" << std::endl;
     }
 
     // for every plane in planes_vector...
@@ -382,7 +380,7 @@ main(int argc, char *argv[])
         // Start from building SampleSet:
         c.start();
         SampleSet time_samples(frames, motion);
-        std::cout << "Building set for [" << plane << "] took " << c.current() << " seconds." << std::endl;
+        std::cout << "Building  : " << c.current() << " seconds. (raster " << plane << ")" << std::endl;
         // This will hold output to be copined back to working place later on:
         const int width = time_samples.width(), height = time_samples.height();
         Image output( width, height );
@@ -396,7 +394,7 @@ main(int argc, char *argv[])
         #endif
 
         std::cout << std::endl;
-        std::cout << "Denoising of [" << plane << "] finished in: " << c.current() / nthreads << " seconds." << std::endl;
+        std::cout << "Denoising : " << c.current() / nthreads << " seconds.(raster " << plane << ")" << std::endl;
 
 
         bool loaded  = inputFile->readImages(images);        
@@ -409,7 +407,7 @@ main(int argc, char *argv[])
             raster  = images(px);
         else
         {
-            std::cerr << "No raster :" << plane << std::endl;
+            std::cerr << "\t[ERROR] No raster :" << plane << std::endl;
             return 1;
         }
         
@@ -434,6 +432,8 @@ main(int argc, char *argv[])
 
     }
 
+    // Info:
+    std::cout << "Output to : " <<  outputName << std::endl;
     // OutputFile should be a copy of working frame with modified raster:
     ostat.setFilename(outputName.c_str());
     parms.setDataType(IMG_HALF); // Back to half when possible.
@@ -443,6 +443,9 @@ main(int argc, char *argv[])
     if (outputFile)
         outputFile->writeImages(images);
     else
+    {
+        std::cerr << "\t[ERROR] Can't save to: " << outputName << std::endl;
         return 1;
+    }
     return 0;    
 }

@@ -31,6 +31,44 @@
 #include <GA/GA_Range.h>
 #include <GA/GA_PageIterator.h>
 #include <GA/GA_PageHandle.h>
+#include <tbb/tbb.h>
+
+//http://stackoverflow.com/questions/20429319/intel-tbb-get-progress-of-work?rq=1
+typedef size_t ProgressType;
+typedef tbb::atomic<ProgressType> ProgressCounter;
+tbb::enumerable_thread_specific<ProgressCounter> LocalCounters;
+
+// zero_allocator is essential here.
+tbb::concurrent_vector<ProgressCounter*, tbb::zero_allocator<ProgressCounter*> > LocalCounterPointers;
+
+void AddToProgress(ProgressType delta) {
+    bool exists;
+    auto& i = LocalCounters.local(exists);
+    i += delta;
+    if( !exists )
+        // First time we've seen this local counter.
+        LocalCounterPointers.push_back(&i);
+}
+
+ProgressType GetProgress() {
+    ProgressType sum = 0;
+    size_t n = LocalCounterPointers.size();
+    for( size_t i=0; i<n; ++i )
+        // "if" deals with timing hold where slot in LocalCounterPointers was allocated but not initialized.
+        if( auto* j = LocalCounterPointers[i] )
+            sum += *j;
+    return sum;
+}
+
+// Can be called asynchronously.
+void ClearProgress() {
+    size_t n = LocalCounterPointers.size();
+    for( size_t i=0; i<n; ++i )
+        // "if" deals with timing hold where slot in LocalCounterPointers was allocated but not initialized.
+        if( auto* j = LocalCounterPointers[i] )
+            *j = 0;
+
+}
 
 
 struct Options
@@ -280,7 +318,8 @@ void printBasicInfo(IMG_File *file)
             const char *compName = plane->getComponentName(j);
             if (compName) printf("%s", compName );
         }
-        std::cout << ", ";
+        std::cout << ",\n";
+        std::cout << "            ";
     }
     printf("\n");
 }
@@ -296,7 +335,6 @@ public:
                 const int width = set.width(), height = set.height();
                 int kernelRadius = opt.kernelWidth > 1 ? ( opt.kernelWidth - 1 ) / 2 : 0;
                 std::vector< double > srcSamples;
-                fprintf(stderr,"\rFiltering %5.2f%% complete.", 100.0 * range.begin()  / ( height-1 )); 
                 // Iterate over scanlines in image:
                 for (int y = range.begin(); y != range.end(); ++y)
                 {
@@ -394,6 +432,11 @@ public:
                             }
                         }
                     }
+
+                    // Thread safe accounting:
+                    int progress = (range.end() - range.begin()); 
+                    AddToProgress(progress);
+                    fprintf(stderr,"\rFiltering : %3.2f%% complete.", 100.0* GetProgress() / progress / height); 
                 }
             }
     private:
