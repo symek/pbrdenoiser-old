@@ -111,7 +111,7 @@ struct SampleSet
 {
     public :
 
-        SampleSet( const std::vector< Image > &i );
+        SampleSet( const std::vector< Image > &i, const std::vector< Image > &motion );
 
         inline int width() const { return m_width; };
         inline int height() const { return m_height; };
@@ -142,6 +142,7 @@ struct SampleSet
         int m_width, m_height;
         std::vector< std::vector< double > > m_samples;
         std::vector< double > m_mean, m_variance, m_deviation, m_min, m_max, m_median;
+        const std::vector< Image > &m_motion;
 };
 
 struct BmpHeader
@@ -225,8 +226,9 @@ void usage()
     std::cout<< "\t -b      Blur strength (default 0.005)." << std::endl;
     std::cout<< "\t -s      Contribution strength (default 5)." << std::endl;
     std::cout<< "\t -k      Kernel width (default 7)." << std::endl;
-    std::cout<< "\t -f      Current frame (default 0 - first frame of provided sequence)." << std::endl;
-    std::cout<< "\t -p      Plane to process (default C)." << std::endl << std::endl;
+    std::cout<< "\t -f      Current frame (default 0 - first frame of the sequence)." << std::endl;
+    std::cout<< "\t -p      Planes to process (default C)." << std::endl;
+    std::cout<< "\t -v      Motion vector pass to apply (default None - no motion vector bias)." << std::endl << std::endl;
 }
 
 

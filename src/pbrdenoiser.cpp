@@ -48,9 +48,10 @@ const double* Image::at( int x, int y ) const
     return &m_data[ ( x + m_width * y ) * 3 ];
 }
 
-SampleSet::SampleSet( const std::vector< Image > &images ) :
+SampleSet::SampleSet( const std::vector< Image > &images, const std::vector< Image > &motion) :
     m_width(0),
-    m_height(0)
+    m_height(0),
+    m_motion(motion)
 {
     for( unsigned int j = 0; j < images.size(); ++j )
     {
@@ -79,6 +80,7 @@ SampleSet::SampleSet( const std::vector< Image > &images ) :
 
     int index = 0;
     std::vector<double> s;
+  
     for( int y = 0; y < m_height; ++y )
     {
         for( int x = 0; x < m_width; ++x )
@@ -86,9 +88,12 @@ SampleSet::SampleSet( const std::vector< Image > &images ) :
             for( int c = 0; c < 3; ++c, ++index )
             {
                 s.resize( images.size() );
+                int mx = 0; int my = 0;
                 for( unsigned int i = 0; i < images.size(); ++i )
                 {
-                    s[i] = images[i].at( x, y )[c];
+                    s[i] = images[i].readable( x + mx, y + my )[c];
+                    mx += static_cast<int>(m_motion[i].at(x, y)[0]);
+                    my += static_cast<int>(m_motion[i].at(x, y)[1]);
                 }
             
                 double mean = 0., variance = 0., norm = 1. / s.size();
@@ -188,7 +193,7 @@ SampleSet::SampleSet( const std::vector< Image > &images ) :
 }
 
 
-int read_image(const std::string &inputName, const std::string &plane_name, Image &image)
+int read_image(const std::string &inputName, const std::string &plane_name, Image &image, bool verbose=true)
 {
     // Optional read parameters:
     IMG_FileParms parms = IMG_FileParms();
@@ -205,17 +210,13 @@ int read_image(const std::string &inputName, const std::string &plane_name, Imag
     
     /// Print basic info:
     static const IMG_Stat &stat = inputFile->getStat();
-    printBasicInfo(inputFile);
+    if (verbose)
+        printBasicInfo(inputFile);
 
     /// Under this line all routines will require myData
     UT_PtrArray<PXL_Raster *> images; // arrays of rasters
     bool       loaded        = false; // did we load the file
-    // const char *plane_name   = "C"  ; // default raster name
     PXL_Raster *raster       = NULL;  // working raster 
-    void       *myData       = NULL;  // data ready to be casted
-    int         npix         = 0;  
-
-
     loaded = inputFile->readImages(images);
     if (!loaded)
     {
@@ -224,15 +225,12 @@ int read_image(const std::string &inputName, const std::string &plane_name, Imag
     } 
     else 
     {
-        std::cout << "Integrity : Ok" << std::endl;
-        // TODO: default C could not exists!
-        // Look for it, and choose diffrent if neccesery
+        if(verbose)
+            std::cout << "Integrity : Ok" << std::endl;
         int px = stat.getPlaneIndex(plane_name.c_str());
         if (px != -1)
         {
             raster  = images(px);
-            myData  = raster->getPixels();
-            npix    = raster->getNumPixels();
         }
         else
         {
@@ -241,8 +239,6 @@ int read_image(const std::string &inputName, const std::string &plane_name, Imag
         }
     }  
 
-    float *fpixels;
-    fpixels = static_cast<float *>(myData);
     int xres = raster->getXres();
     int yres = raster->getYres();
 
@@ -293,11 +289,14 @@ main(int argc, char *argv[])
     /// Read argumets and options:
     CMD_Args args;
     std::string plane_str = "C";            // Default working plane.
+    std::string vel_plane_str;              // Motion vector pass.
     std::vector<std::string> planes_vector; // Planes vector in case user wants to filter > 1 plane
     planes_vector.push_back(plane_str);     // dito
+    std::vector<Image> motion;              // Storage for motion vector pass 
+                                            // (we will reuse for all planes thus I pref to keep it here.)
 
     args.initialize(argc, argv);
-    args.stripOptions("m:b:s:k:f:p:");
+    args.stripOptions("m:b:s:k:f:p:v:");
     Options opt;
 
     // Files we work on:
@@ -327,6 +326,8 @@ main(int argc, char *argv[])
         planes_vector.clear();
         getPlaneNames(plane_str, planes_vector);
     }
+    if(args.found('v'))
+        vel_plane_str = std::string(args.argp('v'));
 
      // Make a name for an image to be genarated:
     std::string name      = image_names[opt.startFrame];
@@ -348,6 +349,22 @@ main(int argc, char *argv[])
     UT_PtrArray<PXL_Raster *> images;                           // arrays of rasters we will copy our output onto.
     PXL_Raster *raster          = NULL;                         // working raster         
 
+
+    if(vel_plane_str.length() > 0)
+    {
+        motion.resize(image_names.size());
+        int result = 0;
+        for (int i = 0; i < image_names.size(); ++i)
+            result += read_image(image_names[i], vel_plane_str, motion[i], false);
+        if (result != image_names.size())
+        {
+            vel_plane_str = ""; // turn off if not all files have motion vectors.
+            std::cerr << "Can't apply motion vectors. Some/all files are missing velocity plane." << std::endl;
+        }
+        else
+            std::cout << "Applying motion vectors." << std::endl;
+    }
+
     // for every plane in planes_vector...
 
     for (std::vector<std::string>::iterator i = planes_vector.begin();\
@@ -364,7 +381,7 @@ main(int argc, char *argv[])
         opt.nImages = result;
         // Start from building SampleSet:
         c.start();
-        SampleSet time_samples(frames);
+        SampleSet time_samples(frames, motion);
         std::cout << "Building set for [" << plane << "] took " << c.current() << " seconds." << std::endl;
         // This will hold output to be copined back to working place later on:
         const int width = time_samples.width(), height = time_samples.height();
