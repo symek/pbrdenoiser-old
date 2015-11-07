@@ -49,10 +49,12 @@ const double* Image::at( int x, int y ) const
     return &m_data[ ( x + m_width * y ) * 3 ];
 }
 
-SampleSet::SampleSet( const std::vector< Image > &images, const std::vector< Image > &motion) :
+SampleSet::SampleSet( const std::vector< Image > &images, const std::vector< Image > &motion,
+                      const std::vector< Image > &worldP) :
     m_width(0),
     m_height(0),
-    m_motion(motion)
+    m_motion(motion),
+    m_worldP(worldP)
 {
     for( unsigned int j = 0; j < images.size(); ++j )
     {
@@ -86,15 +88,37 @@ SampleSet::SampleSet( const std::vector< Image > &images, const std::vector< Ima
     {
         for( int x = 0; x < m_width; ++x )
         {
+            // world pos of source pixel (current frame)
+            const double sourcePx = worldP[0].readable(x, y)[0];
+            const double sourcePy = worldP[0].readable(x, y)[1];
+            const double sourcePz = worldP[0].readable(x, y)[2];
+
             for( int c = 0; c < 3; ++c, ++index )
             {
                 s.resize( images.size() );
                 int mx = 0; int my = 0;
+                // Color of source pixel:
+                const double source = images[0].readable( x, y )[c];
                 for( unsigned int i = 0; i < images.size(); ++i )
                 {
-                    s[i] = images[i].readable( x + mx, y + my )[c];
-                    mx += static_cast<int>(m_motion[i].at(x, y)[0]);
-                    my += static_cast<int>(m_motion[i].at(x, y)[1]);
+                    // world pos of sampled frame:
+                    const double wPx = worldP[i].readable( x + mx, y + my )[0];
+                    const double wPy = worldP[i].readable( x + mx, y + my )[1];
+                    const double wPz = worldP[i].readable( x + mx, y + my )[2];
+
+                    // Distance to source
+                    const double dist   = distance(sourcePx, sourcePy, sourcePz, wPx, wPy, wPz);
+                    const double sample = images[i].readable(x + mx, y + my)[c];
+                    // If we are not too far or the difference is minial accept sample
+                    if (( dist <= 0.005) || (fabs(sample - source) <= 0.125))                        
+                        s[i] = sample;
+                    else
+                        // Overwise discard:
+                        s[i] = 0.0f;
+
+                    // Add vel to current displacemnt...
+                    mx += ceil(m_motion[i].at(x, y)[0])*2.0;
+                    my += ceil(m_motion[i].at(x, y)[1])*2.0;
                 }
             
                 double mean = 0., variance = 0., norm = 1. / s.size();
@@ -295,6 +319,9 @@ main(int argc, char *argv[])
     planes_vector.push_back(plane_str);     // dito
     std::vector<Image> motion;              // Storage for motion vector pass 
                                             // (we will reuse for all planes thus I pref to keep it here.)
+    // Lets try to find our pantalons...
+    std::vector<Image> worldP;
+    std::string wP_plane_str("wP"); 
 
     args.initialize(argc, argv);
     args.stripOptions("m:b:s:k:f:p:v:");
@@ -363,6 +390,22 @@ main(int argc, char *argv[])
             std::cout << "MotionBias: Yes" << std::endl;
     }
 
+    if(wP_plane_str.length() > 0)
+    {
+        worldP.resize(image_names.size());
+        int result = 0;
+        for (int i = 0; i < image_names.size(); ++i)
+            result += read_image(image_names[i], wP_plane_str, worldP[i], false);
+        if (result != image_names.size())
+        {
+            wP_plane_str = ""; // turn off if not all files have motion vectors.
+            std::cerr << "\t[ERROR] Can't find wP plane." << std::endl;
+        }
+        else
+            std::cout << "MotionBias: Yes" << std::endl;
+    }
+
+
     // for every plane in planes_vector...
 
     for (std::vector<std::string>::iterator i = planes_vector.begin();\
@@ -379,7 +422,7 @@ main(int argc, char *argv[])
         opt.nImages = result;
         // Start from building SampleSet:
         c.start();
-        SampleSet time_samples(frames, motion);
+        SampleSet time_samples(frames, motion, worldP);
         std::cout << "Building  : " << c.current() << " seconds. (raster " << plane << ")" << std::endl;
         // This will hold output to be copined back to working place later on:
         const int width = time_samples.width(), height = time_samples.height();

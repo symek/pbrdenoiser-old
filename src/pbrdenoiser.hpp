@@ -100,6 +100,13 @@ struct Options
 };
 
 
+inline double distance(double x1, double y1, double z1, double x2, double y2, double z2)
+{
+    const double x = x2 - x1;
+    const double y = y2 - y1;
+    const double z = z2 - z1;
+    return sqrt(x*x + y*y + z*z);
+}
 
 inline int fromGamma22(double x)
 {
@@ -149,7 +156,8 @@ struct SampleSet
 {
     public :
 
-        SampleSet( const std::vector< Image > &i, const std::vector< Image > &motion );
+        SampleSet( const std::vector< Image > &i, const std::vector< Image > &motion,  
+                   const std::vector< Image > &worldP );
 
         inline int width() const { return m_width; };
         inline int height() const { return m_height; };
@@ -181,6 +189,7 @@ struct SampleSet
         std::vector< std::vector< double > > m_samples;
         std::vector< double > m_mean, m_variance, m_deviation, m_min, m_max, m_median;
         const std::vector< Image > &m_motion;
+        const std::vector< Image > &m_worldP;
 };
 
 struct BmpHeader
