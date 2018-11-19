@@ -2,8 +2,17 @@
 cmake_minimum_required( VERSION 3.4 )
 project( pbrdenoiser )
 
+include(ExternalProject)
+
+ExternalProject_Add( bcd
+  SOURCE_DIR "${CMAKE_SOURCE_DIR}/external/bcd"
+  CMAKE_ARGS -DBCD_USE_CUDA=OFF  -DBCD_BUILD_GUI=OFF -DCMAKE_INSTALL_PREFIX=${CMAKE_SOURCE_DIR}/lib
+ )
+
+
 list( APPEND CMAKE_PREFIX_PATH "$ENV{HT}/cmake")
 find_package( Houdini REQUIRED )
+
 
 # Eigen time
 # set( EIGEN_INCLUDE_DIR "$ENV{EIGEN_INCLUDE_DIR}")
@@ -28,7 +37,8 @@ set( executable_name pbrdenoiser)
 add_executable( ${executable_name}
     # external/cxxopts/include/cxxopts.hpp
     # $ENV{HT}/include/hboost/program_options.hpp 
-    src/pbrdenoiser.cpp
+    # src/pbrdenoiser.cpp
+    src/test.cpp
 )
 
 

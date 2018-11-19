@@ -1,0 +1,3 @@
+[submodule "external/bcd"]
+	path = external/bcd
+	url = https://github.com/superboubek/bcd.git
