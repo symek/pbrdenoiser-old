@@ -7,7 +7,7 @@
 #include <UT/UT_PtrArray.h>
 #include <PXL/PXL_Raster.h>
 #include <UT/UT_String.h>
-#include <tbb/task_scheduler_init.h>
+// #include <tbb/task_scheduler_init.h>
 
 // Houdini version info
 #include <SYS/SYS_Version.h>
