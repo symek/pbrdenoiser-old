@@ -58,16 +58,16 @@ set (sources
 
 add_library (bcd STATIC ${sources})
 
-apply_static_lib_linker_flags (bcd)
+#apply_static_lib_linker_flags (bcd)
 
 
 #--------------------------------------------------------------------------------------------------
 # Static libraries.
 #--------------------------------------------------------------------------------------------------
 
-link_against_platform (bcd)
+#link_against_platform (bcd)
 
-link_against_openexr (bcd)
+#link_against_openexr (bcd)
 
 
 #--------------------------------------------------------------------------------------------------
@@ -81,4 +81,4 @@ target_include_directories (bcd PRIVATE ext/eigen)
 # Preprocessor definitions.
 #--------------------------------------------------------------------------------------------------
 
-apply_preprocessor_definitions (bcd)
+#apply_preprocessor_definitions (bcd)
