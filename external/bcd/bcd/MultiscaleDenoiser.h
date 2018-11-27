@@ -38,10 +38,10 @@ class MultiscaleDenoiser : public IDenoiser
   public:
     virtual bool denoise() override;
 
-  private:
 
     void setInputs(const DenoiserInputs& i_rInputs) override;
 
+  private:
     typedef std::vector<std::unique_ptr<DeepImage<float>>> DeepImageVec;
 
     static DeepImageVec generateDownscaledEmptyImages(
