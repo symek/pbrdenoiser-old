@@ -112,7 +112,6 @@ int main(const int argc, const char** argv)
     //:
     bcd::HistogramParameters accparms;
     bcd::SamplesAccumulator accumulator(width, height, accparms);    
-    //std::cout << "Accum created: " << watch.restart() << "\n";
 	//bcd::SamplesAccumulatorThreadSafe acct(width, height, accparms);
     //
     unsigned long sample_counter = 0;
@@ -129,14 +128,13 @@ int main(const int argc, const char** argv)
         std::unique_ptr<PXL_Raster> C(images[0]);
 		// What a hell? Multithread write is not implemented yet in bcd,
 		// despite methods exists in headers...
+		// Lets do it nethertheless 
 		#if 1
 		auto range = UT_BlockedRange<int>(0, height);
-		accumulateThreaded(range, C.get(), width, 
+		accumulateThreaded<bcd::SamplesAccumulator>(range, C.get(), width, 
 			image_samples.x(), image_samples.y(), &accumulator);
-		
 		std::cout << "Accumulated : " << watch.restart() << "sec\n";
         #else
-		std::cout << "Accumulating: " << watch.restart() << "sec\n";
 		for(size_t y=0; y<height; ++y){
             for(size_t x=0; x<width; ++x) {
                 for (size_t sy=0; sy<image_samples.y(); ++sy) {
@@ -151,7 +149,7 @@ int main(const int argc, const char** argv)
                 }
             }
         }
-		std::cout << "...done in : " << watch.restart() << "sec\n";
+		std::cout << "Accumulated : " << watch.restart() << "sec\n";
         #endif
 
     } else if (deep_channel) {
