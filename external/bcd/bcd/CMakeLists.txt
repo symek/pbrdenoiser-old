@@ -52,5 +52,6 @@ target_link_libraries (${executable_name} ${CMAKE_THREAD_LIBS_INIT})
 # Link against the Houdini libraries, and add required include directories and compile definitions.
 target_link_libraries( ${executable_name} Houdini )
 target_link_libraries(${executable_name} IlmImf )
+target_link_libraries(${executable_name} tbb )
 # Configure several common target properties, such as its output directory.
 houdini_configure_target( ${executable_name} )
