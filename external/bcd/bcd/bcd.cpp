@@ -1,4 +1,4 @@
-// bcd
+// // bcd
 #include "SamplesAccumulator.h"
 #include "Utils.h"
 #include "DeepImage.h"
@@ -6,190 +6,172 @@
 #include "Denoiser.h"
 #include "MultiscaleDenoiser.h"
 #include "IDenoiser.h"
-// utils
-#include "stopwatch.h"
 
 // HDK
 #include <IMG/IMG_File.h>
 #include <IMG/IMG_Stat.h>
 #include <IMG/IMG_FileParms.h>
-#include <IMG/IMG_DeepShadow.h>
-#include <UT/UT_Options.h>
-#include <UT/UT_WorkBuffer.h>
+
 #include <UT/UT_Vector2.h>
 #include <PXL/PXL_Raster.h>
 #include <UT/UT_ParallelUtil.h>
+#include <UT/UT_Options.h>
+#include <CMD/CMD_Args.h>
+// #include <hboost/program_options.hpp>
+
+//own
 #include "bcd.h"
+#include "stopwatch.h"
 // std
 #include <iostream>
 #include <memory>
+#include <string>
+#include <array>
+
+
+// namespace po = hboost::program_options;
+
 int main(const int argc, const char** argv)
 {
-
     Stopwatch<std::chrono::seconds> watch;
-    //
-    if (argc < 3) {
-        std::cerr << "bcd deepfile.exr beauty.exr denoised.exr\n";
+
+    CMD_Args args;
+    args.initialize(argc, argv);
+    args.stripOptions("s:d:b:o:a:S:");
+
+    if (argc < 4) {
+        std::cerr << "pbrdenoiser -s subpixels.exr -b beauty.exr -o denoised.exr\n";
         return 1;
     }
 
     //
-    auto deep_filename   = std::string(argv[1]);
-    auto beauty_filename = std::string(argv[2]); 
-    auto output_filename = std::string(argv[3]);
+
+    if (!args.found('s') || !args.found('b') || !args.found('o')) {
+        std::cerr << "pbrdenoiser -s subpixels.exr -b beauty.exr -o denoised.exr\n";
+        return 1;
+    }
+
+    const auto subpixel_filename1 = std::string(args.argp('s')); 
+    const auto beauty_filename    = std::string(args.argp('b')); 
+    const auto output_filename    = std::string(args.argp('o')); 
+
+    uint bcd_scales = 4;
+    if(args.found('S')) {
+        bcd_scales = args.iargp('S');
+    }
+
+
+    std::string subpixel_filename2;
+    if (args.found('d')) { 
+        subpixel_filename2 = std::string(args.argp('d')); 
+    }
+
     //
-    IMG_DeepShadow deep;
     auto parms = std::make_unique<IMG_FileParms>();
     parms->readAlphaAsPlane();
     parms->setDataType(IMG_FLOAT);
-    std::unique_ptr<IMG_File> flat(nullptr);
-    std::unique_ptr<IMG_File> beauty(nullptr);
-    int  width, height;
-    //
-    if (!deep.open(deep_filename.c_str())) {
-        flat.reset(IMG_File::open(deep_filename.c_str()));
-        if(!flat) {
-            std::cerr << "Can't open " << deep_filename << '\n';
-            return 1;
-        }
-    }
 
+    //
+    std::unique_ptr<IMG_File> subpixel1(nullptr);
+    subpixel1.reset(IMG_File::open(subpixel_filename1.c_str()));
+    
+    if(!subpixel1) {
+        std::cerr << "Can't open " << subpixel_filename1 << '\n';
+        return 1;
+    }
+    const uint sub1_width = subpixel1->getStat().getXres();
+    const uint sub1_height= subpixel1->getStat().getYres();
+
+    std::unique_ptr<IMG_File> beauty(nullptr);
     beauty.reset(IMG_File::open(beauty_filename.c_str()));
     if (!beauty) {
         std::cerr << "Can't open beauty file " << beauty_filename << '\n';
         return 1;
-    } else {
-        width = beauty->getStat().getXres();
-        height= beauty->getStat().getYres();
-    }
-    
-
-    // 
-    std::cout << "Opening file: " << watch.restart() << "sec\n";
-    //
-    const IMG_DeepShadowChannel *deep_channel = nullptr;
-    for (int i = 0; i < deep.getChannelCount(); i++) {
-        auto name = std::string(deep.getChannel(i)->getName());
-        if( name == std::string("C")) {
-            deep_channel = deep.getChannel(i);
-            // deep.resolution(width, height);
-            break;
-        }
-    }
-
-    //
-    if (!deep_channel && !flat) {
-        std::cerr << "No {r,g,b} channel in deep file nor flat file. Quiting now.\n";
-        return 1;
-    }
-
-    
-    auto image_samples = UT_Vector2D(1,1);
-
-    if (deep_channel) {
-        UT_SharedPtr<UT_Options> opt = deep.getTextureOptions();
-        if (opt->hasOption("image:samples")) {
-            image_samples = opt->getOptionV2("image:samples");
-            std::cout << "Deep samples: " << image_samples.x() \
-            << ", " << image_samples.y() << "\n";
-        }
     } 
-    else if (flat) {
-        // width = flat->getStat().getXres();
-        // height= flat->getStat().getYres();
-        UT_SharedPtr<UT_Options> opt = flat->imageTextureOptions();
-        if (opt->hasOption("image:samples")) {
-            image_samples = opt->getOptionV2("image:samples");
-            std::cout << "Flat samples: " << image_samples.x() \
-            << ", " << image_samples.y() << "\n";
+    //
+    const uint beauty_width = beauty->getStat().getXres();
+    const uint beauty_height= beauty->getStat().getYres();
+    assert((beauty_width < sub1_width) && (beauty_height < sub1_height));
+    std::cout << "Opening beauty(1): " << watch.restart() << " sec\n";
+
+    std::unique_ptr<IMG_File> subpixel2(nullptr);
+    if(subpixel_filename2.compare("") != 0) {
+        subpixel2.reset(IMG_File::open(subpixel_filename2.c_str()));
+        if(!subpixel2) {
+            std::cerr << "Can't open " << subpixel_filename2 << '\n';
+            return 1;
         }
+        const uint sub2_width = subpixel2->getStat().getXres();
+        const uint sub2_height= subpixel2->getStat().getYres();
+        assert(sub1_width==sub1_width && sub2_height==sub2_height);
+        std::cout << "Opening beauty(2): " << watch.restart() << " sec\n";
+
+    }
+    
+    // 
+    
+    auto samples = UT_Vector2D(1,1);
+    UT_SharedPtr<UT_Options> opt = subpixel1->imageTextureOptions();
+    if (opt->hasOption("image:samples")) {
+        samples = opt->getOptionV2("image:samples");
+        std::cout << "Subpixels     (1): " << samples.x() << " x " << samples.y() << "\n";
     } else {
-        std::cerr << "Neither deep nor flat file could be processed." << '\n';
+        std::cerr << "Can't do without subpixel metadata." << '\n';
         return 1;
     }
-
+    
 
     //:
     bcd::HistogramParameters accparms;
-    bcd::SamplesAccumulator accumulator(width, height, accparms);    
+    bcd::SamplesAccumulator accumulator(beauty_width, beauty_height, accparms);    
     //bcd::SamplesAccumulatorThreadSafe acct(width, height, accparms);
     //
     unsigned long sample_counter = 0;
+    UT_Array<PXL_Raster *> images;
+    if (!subpixel1->readImages(images, "C")) {
+        std::cerr << "Can't read C plane from file " << subpixel_filename1 << '\n'; 
+        return 1;
+    }
+    std::cout << "Pixels read   (1): " << watch.restart() << " sec\n";
+    std::unique_ptr<PXL_Raster> C(images[0]);
+    // Lets do it nethertheless 
+    auto range = UT_BlockedRange<int>(0, beauty_height);
+    accumulateThreaded<bcd::SamplesAccumulator>(range, C.get(), beauty_width, 
+        samples.x(), samples.y(), &accumulator);
 
-    if (flat){
-
-        UT_Array<PXL_Raster *> images;
-        if (!flat->readImages(images, "C")) {
-            std::cerr << "Can't read C plane from file " << deep_filename << '\n'; 
+    std::cout << "Accumulated   (1): " << watch.restart() << " sec\n";
+    // This doesn't clear the memory.
+    images.clear(); //?
+    // ... but this does:
+    C.reset(nullptr);
+    if(subpixel2) {
+        if (!subpixel2->readImages(images, "C")) {
+            std::cerr << "Can't read C plane from file " << subpixel_filename2 << '\n'; 
             return 1;
         }
-        
-        std::cout << "Pixels read : " << watch.restart() << "sec\n";
-        std::unique_ptr<PXL_Raster> C(images[0]);
-        // What a hell? Multithread write is not implemented yet in bcd,
-        // despite methods exists in headers...
-        // Lets do it nethertheless 
-        #if 1
-        auto range = UT_BlockedRange<int>(0, height);
-        accumulateThreaded<bcd::SamplesAccumulator>(range, C.get(), width, 
-            image_samples.x(), image_samples.y(), &accumulator);
-        std::cout << "Accumulated : " << watch.restart() << "sec\n";
-        #else
-        for(size_t y=0; y<height; ++y){
-            for(size_t x=0; x<width; ++x) {
-                for (size_t sy=0; sy<image_samples.y(); ++sy) {
-                    for(size_t sx=0; sx<image_samples.x(); ++sx) {
-                        float color[3] = {0,0,0};
-                        const uint X = x*image_samples.x() + sx;
-                        const uint Y = y*image_samples.y() + sy;
-                        C->getPixelValue(X, Y, color);
-                        accumulator.addSample(y, x, color[0], color[1], color[2]);
-                        sample_counter++;
-                    }
-                }
-            }
-        }
-        std::cout << "Accumulated : " << watch.restart() << "sec\n";
-        #endif
+        std::cout << "Pixels read   (2): " << watch.restart() << " sec\n";
 
-    } else if (deep_channel) {
-        IMG_DeepPixelReader pixel(deep);
-        for(size_t y=height; y>0; --y) {
-            for (size_t x=0; x<width; ++x) {
-                pixel.open(x, y);
-                const int depth = pixel.getDepth();
-                for(int s = 0; s<depth; ++s) {
-                    const float *data = pixel.getData(*deep_channel, s);
-                    accumulator.addSample(y, x, data[0], data[1], data[2]);
-                    sample_counter++;
-                }
-            }
-        }
-    } else {
-       
+        C.reset(images[0]);
+        auto range = UT_BlockedRange<int>(0, beauty_height);
+        accumulateThreaded<bcd::SamplesAccumulator>(range, C.get(), beauty_width, 
+            samples.x(), samples.y(), &accumulator);
+        std::cout << "Accumulated   (2): " << watch.restart() << " sec\n";
     }
 
-    //
-
-    std::cout << "width,height: " << width << "," << height << '\n';
-    //std::cout << "Samples num : " << sample_counter << '\n';
-    //std::cout << "Need samples: " << width*height*image_samples.x()*image_samples.y() << '\n';
-    //std::cout << "Is it equal?: " << bool(sample_counter >= width*height*image_samples.x()*image_samples.y()) << '\n';
-    //
-    //
+    
     bcd::SamplesStatisticsImages stats = accumulator.extractSamplesStatistics();
-    std::cout << "Statistics  : " << watch.restart() << "sec\n";
+    std::cout << "Statistics       : " << watch.restart() << " sec\n";
     bcd::Deepimf histoImage = bcd::Utils::mergeHistogramAndNbOfSamples(
             stats.m_histoImage, stats.m_nbOfSamplesImage);
     
-    std::cout << "Historgram  : " << watch.restart() << "sec\n";
+    std::cout << "Historgram       : " << watch.restart() << " sec\n";
     //
     bcd::DenoiserInputs inputs;
     bcd::DenoiserOutputs outputs;
     bcd::DenoiserParameters parameters;
     
     //
-    //parameters.m_minEigenValue = 0.0001f;
+    // parameters.m_minEigenValue = 0.0001f;
     
     //
     bcd::Deepimf beauty_image;
@@ -204,7 +186,7 @@ int main(const int argc, const char** argv)
     outputs.m_pDenoisedColors = &outputDenoisedColorImage;
 
     //
-    auto denoiser = std::make_unique<bcd::MultiscaleDenoiser>(4);
+    auto denoiser = std::make_unique<bcd::MultiscaleDenoiser>(bcd_scales);
     denoiser->setInputs(inputs);
     denoiser->setOutputs(outputs);
     denoiser->setParameters(parameters);
@@ -212,28 +194,52 @@ int main(const int argc, const char** argv)
     //
     std::cout << "Denoising...  " << "\n";
     denoiser->denoise();
-    std::cout << "...done in  : " << watch.restart() << "sec\n";
+    std::cout << "...done in       : " << watch.restart() << " sec\n";
     //  
     bcd::ImageIO::writeMultiChannelsEXR(outputDenoisedColorImage, output_filename.c_str());
     //
-    std::cout << "Image saved : " << watch.restart() << "sec\n";
-    //const char *hname = "./histogram.exr";
-    //const char *cname = "./covariance.exr";
+    std::cout << "Image saved : " << watch.restart() << " sec\n";
     stats.m_histoImage.clearAndFreeMemory();
     stats.m_nbOfSamplesImage.clearAndFreeMemory();
-    
-    //
-    std::cout << "Stats del[] : " << watch.restart() << "sec\n";
-    //bcd::ImageIO::writeMultiChannelsEXR(stats.m_meanImage, cname);
-    //bcd::ImageIO::writeMultiChannelsEXR(histoImage, hname);
-    
+    std::cout << "Stats del[] : " << watch.restart() << " sec\n";
+
+
     return 0;
+}
+    // return 0;
+    // //const char *hname = "./histogram.exr";
+    // //const char *cname = "./covariance.exr";
+    
+    // //
+    // // bcd::ImageIO::writeMultiChannelsEXR(stats.m_meanImage, cname);
+    // // bcd::ImageIO::writeMultiChannelsEXR(histoImage, hname);
+    
     //
     //std::cout << "Images saved: " << watch.restart() << "sec\n";
 
   //return 0;
-}
-    // return 0;
+
+    // po::options_description _cli("bcd options");
+    // _cli.add_options()
+    //     ("subixel,s",po::value<std::string>()->required(),              "Unfilered super resolution image.")
+    //     ("beauty,b", po::value<std::string>()->required(),                "Beauty pass to be denoised.")
+    //     ("output,o", po::value<std::string>()->required(),              "Ouput file (.exr)")
+    //     // ("skin,k",   po::value<StringVec>()->multitoken(),              "Input skin files  (*.bgeo)")
+    //     // ("var,v",    po::value<double>(),                               "PCA Variance (if omitted, PCA won't be performed)")
+    //     // ("norm,n",   po::bool_switch()->default_value(false),             "Orthonormalize PCA")
+    //     // ("psd,p",    po::bool_switch()->default_value(false),           \
+    //         // "Compute pose space deformation (requires tangents vectors)")
+    //     ("help,h",                                                     "Prints this screen.");
+
+    // po::variables_map options;        
+    // po::store(po::parse_command_line(argc, argv, _cli), options);
+
+    // if (options.count("help") || argc == 1) {
+    //     std::cout << _cli << '\n';
+    //     return 0;
+    // }
+
+    // po::notify(options);
 
     // bcd::DeepImage<float> input;
     // bcd::ImageIO::loadEXR(input, filename.c_str());
