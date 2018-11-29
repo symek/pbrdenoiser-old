@@ -112,7 +112,7 @@ int main(const int argc, const char** argv)
     //:
     bcd::HistogramParameters accparms;
     bcd::SamplesAccumulator accumulator(width, height, accparms);    
-	//bcd::SamplesAccumulatorThreadSafe acct(width, height, accparms);
+    //bcd::SamplesAccumulatorThreadSafe acct(width, height, accparms);
     //
     unsigned long sample_counter = 0;
 
@@ -123,19 +123,19 @@ int main(const int argc, const char** argv)
             std::cerr << "Can't read C plane from file " << deep_filename << '\n'; 
             return 1;
         }
-		
-		std::cout << "Pixels read : " << watch.restart() << "sec\n";
+        
+        std::cout << "Pixels read : " << watch.restart() << "sec\n";
         std::unique_ptr<PXL_Raster> C(images[0]);
-		// What a hell? Multithread write is not implemented yet in bcd,
-		// despite methods exists in headers...
-		// Lets do it nethertheless 
-		#if 1
-		auto range = UT_BlockedRange<int>(0, height);
-		accumulateThreaded<bcd::SamplesAccumulator>(range, C.get(), width, 
-			image_samples.x(), image_samples.y(), &accumulator);
-		std::cout << "Accumulated : " << watch.restart() << "sec\n";
+        // What a hell? Multithread write is not implemented yet in bcd,
+        // despite methods exists in headers...
+        // Lets do it nethertheless 
+        #if 1
+        auto range = UT_BlockedRange<int>(0, height);
+        accumulateThreaded<bcd::SamplesAccumulator>(range, C.get(), width, 
+            image_samples.x(), image_samples.y(), &accumulator);
+        std::cout << "Accumulated : " << watch.restart() << "sec\n";
         #else
-		for(size_t y=0; y<height; ++y){
+        for(size_t y=0; y<height; ++y){
             for(size_t x=0; x<width; ++x) {
                 for (size_t sy=0; sy<image_samples.y(); ++sy) {
                     for(size_t sx=0; sx<image_samples.x(); ++sx) {
@@ -149,7 +149,7 @@ int main(const int argc, const char** argv)
                 }
             }
         }
-		std::cout << "Accumulated : " << watch.restart() << "sec\n";
+        std::cout << "Accumulated : " << watch.restart() << "sec\n";
         #endif
 
     } else if (deep_channel) {
@@ -177,59 +177,59 @@ int main(const int argc, const char** argv)
     //std::cout << "Is it equal?: " << bool(sample_counter >= width*height*image_samples.x()*image_samples.y()) << '\n';
     //
     //
-	bcd::SamplesStatisticsImages stats = accumulator.extractSamplesStatistics();
-	std::cout << "Statistics  : " << watch.restart() << "sec\n";
+    bcd::SamplesStatisticsImages stats = accumulator.extractSamplesStatistics();
+    std::cout << "Statistics  : " << watch.restart() << "sec\n";
     bcd::Deepimf histoImage = bcd::Utils::mergeHistogramAndNbOfSamples(
             stats.m_histoImage, stats.m_nbOfSamplesImage);
     
-	std::cout << "Historgram  : " << watch.restart() << "sec\n";
-	//
-	bcd::DenoiserInputs inputs;
-	bcd::DenoiserOutputs outputs;
-	bcd::DenoiserParameters parameters;
-	
-	//
-	//parameters.m_minEigenValue = 0.0001f;
-	
+    std::cout << "Historgram  : " << watch.restart() << "sec\n";
     //
-	bcd::Deepimf beauty_image;
-	bcd::ImageIO::loadEXR(beauty_image, beauty_filename.c_str());
-	inputs.m_pColors      = &beauty_image;
-	inputs.m_pNbOfSamples = &(stats.m_nbOfSamplesImage);
-	inputs.m_pHistograms  = &(stats.m_histoImage);
-	inputs.m_pSampleCovariances = &(stats.m_meanImage);
+    bcd::DenoiserInputs inputs;
+    bcd::DenoiserOutputs outputs;
+    bcd::DenoiserParameters parameters;
+    
+    //
+    //parameters.m_minEigenValue = 0.0001f;
+    
+    //
+    bcd::Deepimf beauty_image;
+    bcd::ImageIO::loadEXR(beauty_image, beauty_filename.c_str());
+    inputs.m_pColors      = &beauty_image;
+    inputs.m_pNbOfSamples = &(stats.m_nbOfSamplesImage);
+    inputs.m_pHistograms  = &(stats.m_histoImage);
+    inputs.m_pSampleCovariances = &(stats.m_meanImage);
 
-	//	
-	bcd::Deepimf outputDenoisedColorImage(beauty_image);
-	outputs.m_pDenoisedColors = &outputDenoisedColorImage;
+    //  
+    bcd::Deepimf outputDenoisedColorImage(beauty_image);
+    outputs.m_pDenoisedColors = &outputDenoisedColorImage;
 
-	//
-	auto denoiser = std::make_unique<bcd::MultiscaleDenoiser>(4);
-	denoiser->setInputs(inputs);
-	denoiser->setOutputs(outputs);
-	denoiser->setParameters(parameters);
-	
-	//
-	std::cout << "Denoising...  " << "\n";
-	denoiser->denoise();
-	std::cout << "...done in  : " << watch.restart() << "sec\n";
-	//	
+    //
+    auto denoiser = std::make_unique<bcd::MultiscaleDenoiser>(4);
+    denoiser->setInputs(inputs);
+    denoiser->setOutputs(outputs);
+    denoiser->setParameters(parameters);
+    
+    //
+    std::cout << "Denoising...  " << "\n";
+    denoiser->denoise();
+    std::cout << "...done in  : " << watch.restart() << "sec\n";
+    //  
     bcd::ImageIO::writeMultiChannelsEXR(outputDenoisedColorImage, output_filename.c_str());
-	//
-	std::cout << "Image saved : " << watch.restart() << "sec\n";
-	//const char *hname = "./histogram.exr";
+    //
+    std::cout << "Image saved : " << watch.restart() << "sec\n";
+    //const char *hname = "./histogram.exr";
     //const char *cname = "./covariance.exr";
     stats.m_histoImage.clearAndFreeMemory();
     stats.m_nbOfSamplesImage.clearAndFreeMemory();
-	
-	//
-	std::cout << "Stats del[] : " << watch.restart() << "sec\n";
+    
+    //
+    std::cout << "Stats del[] : " << watch.restart() << "sec\n";
     //bcd::ImageIO::writeMultiChannelsEXR(stats.m_meanImage, cname);
     //bcd::ImageIO::writeMultiChannelsEXR(histoImage, hname);
-	
-	return 0;
-	//
-	//std::cout << "Images saved: " << watch.restart() << "sec\n";
+    
+    return 0;
+    //
+    //std::cout << "Images saved: " << watch.restart() << "sec\n";
 
   //return 0;
 }
