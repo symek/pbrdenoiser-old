@@ -11,6 +11,7 @@
 #include <IMG/IMG_File.h>
 #include <IMG/IMG_Stat.h>
 #include <IMG/IMG_FileParms.h>
+#include <IMG/IMG_FileTypes.h>
 
 #include <UT/UT_Vector2.h>
 #include <PXL/PXL_Raster.h>
@@ -73,7 +74,7 @@ int main(const int argc, const char** argv)
 
     //
     std::unique_ptr<IMG_File> subpixel1(nullptr);
-    subpixel1.reset(IMG_File::open(subpixel_filename1.c_str()));
+    subpixel1.reset(IMG_File::open(subpixel_filename1.c_str(), parms.get()));
     
     if(!subpixel1) {
         std::cerr << "Can't open " << subpixel_filename1 << '\n';
@@ -83,7 +84,7 @@ int main(const int argc, const char** argv)
     const uint sub1_height= subpixel1->getStat().getYres();
 
     std::unique_ptr<IMG_File> beauty(nullptr);
-    beauty.reset(IMG_File::open(beauty_filename.c_str()));
+    beauty.reset(IMG_File::open(beauty_filename.c_str(), parms.get()));
     if (!beauty) {
         std::cerr << "Can't open beauty file " << beauty_filename << '\n';
         return 1;
@@ -96,7 +97,7 @@ int main(const int argc, const char** argv)
 
     std::unique_ptr<IMG_File> subpixel2(nullptr);
     if(subpixel_filename2.compare("") != 0) {
-        subpixel2.reset(IMG_File::open(subpixel_filename2.c_str()));
+        subpixel2.reset(IMG_File::open(subpixel_filename2.c_str(), parms.get()));
         if(!subpixel2) {
             std::cerr << "Can't open " << subpixel_filename2 << '\n';
             return 1;
@@ -135,16 +136,18 @@ int main(const int argc, const char** argv)
     std::cout << "Pixels read   (1): " << watch.restart() << " sec\n";
     std::unique_ptr<PXL_Raster> C(images[0]);
     // Lets do it nethertheless 
+    #if 0
     auto range = UT_BlockedRange<int>(0, beauty_height);
     accumulateThreaded<bcd::SamplesAccumulator>(range, C.get(), beauty_width, 
         samples.x(), samples.y(), &accumulator);
 
     std::cout << "Accumulated   (1): " << watch.restart() << " sec\n";
-    // This doesn't clear the memory.
-    images.clear(); //?
-    // ... but this does:
-    C.reset(nullptr);
+
     if(subpixel2) {
+        // This doesn't clear the memory.
+        images.clear(); //?
+        // ... but this does:
+        C.reset(nullptr);
         if (!subpixel2->readImages(images, "C")) {
             std::cerr << "Can't read C plane from file " << subpixel_filename2 << '\n'; 
             return 1;
@@ -158,7 +161,42 @@ int main(const int argc, const char** argv)
         std::cout << "Accumulated   (2): " << watch.restart() << " sec\n";
     }
 
-    
+    #else
+    auto stat_img = IMG_Stat(beauty_width, beauty_height, IMG_FLOAT32, IMG_RGB);
+    auto *plane = stat_img.addPlane("C", IMG_FLOAT32, IMG_RGB);
+    auto test_img = std::unique_ptr<IMG_File>(IMG_File::create("./test_resampled.exr", stat_img));
+
+    UT_Array<PXL_Raster *> out;
+    if(!beauty->readImages(out, "C")) {
+        std::cerr << "Can't read from beauty. \n";
+        return 1; 
+    }
+
+    // we gonna write to beaty raster already in mem
+    std::unique_ptr<PXL_Raster> raster(out[0]);
+    // std::cout << beauty
+
+    for (int y=0; y < beauty_height; ++y) {
+        const uint Y = y*samples.y();                                              
+        for(size_t x=0; x<beauty_width; ++x) {                                                                   
+            const uint X = x*samples.x();                                              
+            for(size_t sy=0; sy<samples.y(); ++sy) {                                               
+                for(size_t sx=0; sx<samples.x(); ++sx) {                                            
+                    float color[3] = {0,0,0};                                                             
+                    C->getPixelValue(X+sx, Y+sy, color);                                                        
+                    accumulator.addSample(y, x, color[0], color[1], color[2]);
+                    raster->setPixelValue(x, y, color);
+                }                                                                                         
+            }                                                                                             
+        }
+    }
+
+    test_img->writeImages(out);
+    test_img->close();
+    std::cout << "Test image saved: " << watch.restart() << " sec\n";
+    // return 0;
+
+    #endif
     bcd::SamplesStatisticsImages stats = accumulator.extractSamplesStatistics();
     std::cout << "Statistics       : " << watch.restart() << " sec\n";
     bcd::Deepimf histoImage = bcd::Utils::mergeHistogramAndNbOfSamples(

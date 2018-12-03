@@ -37,6 +37,7 @@ target_link_libraries (${executable_name} ${CMAKE_THREAD_LIBS_INIT})
 target_link_libraries( ${executable_name} Houdini )
 target_link_libraries( ${executable_name} IlmImf )
 target_link_libraries( ${executable_name} tbb )
-target_link_libraries( ${executable_name} hboost_program_options )
+# target_link_libraries( ${executable_name} hboost_program_options )
 # Configure several common target properties, such as its output directory.
 houdini_configure_target( ${executable_name} )
+SET( CMAKE_CXX_FLAGS  ${CMAKE_CXX_FLAGS} "-ggdb" )
