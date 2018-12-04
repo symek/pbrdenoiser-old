@@ -71,6 +71,7 @@ int main(const int argc, const char** argv)
     auto parms = std::make_unique<IMG_FileParms>();
     parms->readAlphaAsPlane();
     parms->setDataType(IMG_FLOAT);
+    parms->orientImage(IMG_ORIENT_X_NONE, IMG_ORIENT_TOP_FIRST);
 
     //
     std::unique_ptr<IMG_File> subpixel1(nullptr);
@@ -136,7 +137,7 @@ int main(const int argc, const char** argv)
     std::cout << "Pixels read   (1): " << watch.restart() << " sec\n";
     std::unique_ptr<PXL_Raster> C(images[0]);
     // Lets do it nethertheless 
-    #if 0
+    #if 1
     auto range = UT_BlockedRange<int>(0, beauty_height);
     accumulateThreaded<bcd::SamplesAccumulator>(range, C.get(), beauty_width, 
         samples.x(), samples.y(), &accumulator);
@@ -236,6 +237,13 @@ int main(const int argc, const char** argv)
     //  
     bcd::ImageIO::writeMultiChannelsEXR(outputDenoisedColorImage, output_filename.c_str());
     //
+    const char *hname = "./histogram.exr";
+    const char *cname = "./covariance.exr";
+    
+    
+    bcd::ImageIO::writeMultiChannelsEXR(stats.m_meanImage, cname);
+    bcd::ImageIO::writeMultiChannelsEXR(histoImage, hname);
+
     std::cout << "Image saved : " << watch.restart() << " sec\n";
     stats.m_histoImage.clearAndFreeMemory();
     stats.m_nbOfSamplesImage.clearAndFreeMemory();
@@ -245,12 +253,6 @@ int main(const int argc, const char** argv)
     return 0;
 }
     // return 0;
-    // //const char *hname = "./histogram.exr";
-    // //const char *cname = "./covariance.exr";
-    
-    // //
-    // // bcd::ImageIO::writeMultiChannelsEXR(stats.m_meanImage, cname);
-    // // bcd::ImageIO::writeMultiChannelsEXR(histoImage, hname);
     
     //
     //std::cout << "Images saved: " << watch.restart() << "sec\n";
