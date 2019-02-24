@@ -49,8 +49,8 @@ set( executable_name pbrdenoiser)
 add_executable( ${executable_name}
     # external/cxxopts/include/cxxopts.hpp
     # $ENV{HT}/include/hboost/program_options.hpp 
-    # src/pbrdenoiser.cpp
-    src/test.cpp
+    src/pbrdenoiser.cpp
+    # src/test.cpp
 )
 
 
