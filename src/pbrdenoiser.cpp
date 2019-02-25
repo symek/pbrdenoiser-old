@@ -15,6 +15,7 @@
 #include <vector>
 #include <iostream>
 
+
 void usage(const char* program_name)
 {
     std::cout << "USAGE: ";
@@ -26,6 +27,7 @@ void usage(const char* program_name)
     std::cout << "\t-l  image is in low dynamic range (hdri   by default)\n";
     std::cout << "\t-s  image is in sRGB color space  (linear by default)\n";
     std::cout << "\t-p  image planes to be filtered   ('C'    by default)\n";
+    std::cout << "\t-P  number of denoising passes    (1      by default)\n";
 }
 
 int 
@@ -36,7 +38,7 @@ main(int argc, char *argv[])
     std::vector<std::string> planes_to_denoise{"C"}; 
 
     args.initialize(argc, argv);
-    args.stripOptions("d:p:i:o:ls");
+    args.stripOptions("d:p:i:o:lsP:");
 
     const char * intput_filename;
     const char * output_filename;
@@ -44,6 +46,7 @@ main(int argc, char *argv[])
     const char * normals_name = "N";
     bool srgb = false;
     bool hdri = true;
+    size_t passes = 1;
 
     if (args.found('i') && args.found('o')) {
         intput_filename = args.argp('i');
@@ -63,12 +66,24 @@ main(int argc, char *argv[])
         albedo_name = args.argp('a');
     }
 
-     if (args.found('h')) {
+    if (args.found('l')) {
         hdri = false;
     }
 
-     if (args.found('s')) {
+    const char * dynamic = hdri ? "high" : "low";
+    std::cout << "INFO:  Color range: " << dynamic << "\n"; 
+
+    if (args.found('s')) {
         srgb = true;
+
+    }
+    const char * gamma = srgb ? "sRGB" : "linear";
+    std::cout << "INFO:  Color gamma: " << gamma << "\n"; 
+
+    if(args.found('P')) {   
+        passes = args.iargp('P');
+        std::cout << "INFO: Passes to run: " << passes << "\n"; 
+
     }
 
 
@@ -103,7 +118,7 @@ main(int argc, char *argv[])
             xres   = beauty->getXres(); 
             yres   = beauty->getYres();
             beauty_ptr = beauty->getPixels();
-            std::cout << "INFO: Denoisig plane: " << plane_name << "\n"; 
+            std::cout << "INFO: Target plane: " << plane_name << "\n"; 
         }
         else {
             std::cerr << "No plane to denoise found :" << plane_name << std::endl;
@@ -137,8 +152,6 @@ main(int argc, char *argv[])
 
         // Create a denoising filter
         oidn::FilterRef filter = device.newFilter("RT"); // generic ray tracing filter
-        filter.setImage("color",  beauty_ptr,  oidn::Format::Float3, xres, yres);
-
         if (albedo) {
             filter.setImage("albedo", albedo_ptr, oidn::Format::Float3, xres, yres); // optional
         }
@@ -146,17 +159,32 @@ main(int argc, char *argv[])
             filter.setImage("normal", normals_ptr, oidn::Format::Float3, xres, yres); // optional
         }
 
-        filter.setImage("output", output_ptr.get(), oidn::Format::Float3, xres, yres);
-        filter.set("hdr", hdri); // image is HDR
-        filter.set("srgb", srgb); // image is srgb
-        filter.commit();
+        std::cout << "INFO: Start denoising...\n" << std::flush; 
 
-        std::cout << "INFO: Start denoising... " << std::flush; 
+        //we swap those to run denoiser multiply times
+        void * in_ptr  = beauty_ptr;
+        void * out_ptr = output_ptr.get();
+
+        for(int pass=0; pass<passes; ++pass)
+        {
+            filter.setImage("color",  in_ptr,  oidn::Format::Float3, xres, yres);
+            filter.setImage("output", out_ptr, oidn::Format::Float3, xres, yres);
+            filter.set("hdr", hdri); // image is HDR
+            filter.set("srgb", srgb); // image is srgb
+            filter.commit();
+            // Filter the image
+            std::cout << "INFO: Pass " << pass+1<< "\n" << std::flush;
+            filter.execute();
+
+            if (pass < passes-1) {
+                void *tmp = out_ptr; 
+                out_ptr = in_ptr;
+                in_ptr = tmp;
+            }
+        }
 
 
-        // Filter the image
-        filter.execute();
-        std::cout << "done.\n"; 
+        std::cout << "INFO: done.\n"; 
 
 
         // Check for errors
@@ -169,17 +197,19 @@ main(int argc, char *argv[])
 
         std::cout << "INFO: Saving images to: " << output_filename << "\n"; 
 
-         // OutputFile should be a copy of working frame with modified raster:
+         // output_file should be a copy of working frame with modified raster:
         IMG_Stat output_stat = IMG_Stat(input_stat);  
         output_stat.setFilename(output_filename);
         input_parms.setDataType(IMG_HALF); // Back to half when possible.
         IMG_File *output_file = IMG_File::create(output_filename, 
             (const IMG_Stat)input_stat, &input_parms);
-        // This does't work
+        // This does't work :(
         // raster->setRaster((void*)output_ptr.get(), true, true); 
+        
         // this does
         for(size_t y=0; y<yres; ++y) {
-            const void * data = (const void*)&output_ptr.get()[y*xres*3];
+            const float * output_f = (const float *)out_ptr;
+            const void * data = (const void*)&output_f[y*xres*3];
             beauty->writeToRow(y, data);
         }
        
