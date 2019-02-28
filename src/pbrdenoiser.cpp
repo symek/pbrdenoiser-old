@@ -8,12 +8,15 @@
 #include <PXL/PXL_Raster.h>
 #include <UT/UT_String.h>
 
+#include "filtering.hpp"
+
 #ifdef BUILD_WITH_OIDN
 #include <OpenImageDenoise/oidn.hpp>
 #endif
 
 #include <vector>
 #include <iostream>
+
 
 
 void usage(const char* program_name)
@@ -38,7 +41,7 @@ main(int argc, char *argv[])
     std::vector<std::string> planes_to_denoise{"C"}; 
 
     args.initialize(argc, argv);
-    args.stripOptions("d:p:i:o:lsP:");
+    args.stripOptions("d:p:i:o:lsP:f");
 
     const char * intput_filename;
     const char * output_filename;
@@ -47,6 +50,7 @@ main(int argc, char *argv[])
     bool srgb = false;
     bool hdri = true;
     size_t passes = 1;
+    size_t downscale = 0;
 
     if (args.found('i') && args.found('o')) {
         intput_filename = args.argp('i');
@@ -83,9 +87,12 @@ main(int argc, char *argv[])
     if(args.found('P')) {   
         passes = args.iargp('P');
         std::cout << "INFO: Passes to run: " << passes << "\n"; 
-
     }
 
+     if(args.found('f')) {   
+        downscale = args.iargp('f');
+        std::cout << "INFO: Downsample: x" << passes << "\n"; 
+    }
 
 
     IMG_FileParms input_parms = IMG_FileParms();
@@ -145,6 +152,89 @@ main(int argc, char *argv[])
 
     auto output_ptr = std::make_unique<float[]>(3*xres*yres);
 
+    // Filtering path:
+    if(downscale && beauty && xres && yres)
+    {
+        const size_t size = xres*yres*3;
+        std::vector<float> input;
+        const float * beauty_f = (const float*) beauty_ptr;
+        for(size_t i=0; i<size; ++i) {
+            input[i] = beauty_f[i];
+        }
+
+        MitchellNetravali kernel;
+        std::vector<float> result = downsample<MitchellNetravali>(input, downscale, kernel);
+
+        IMG_FileParms parms;
+        parms.scaleByFactor(1.0f/downscale, 1.0f/downscale);
+        if (!IMG_File::copyToFile(intput_filename, output_filename, parms)) {
+            std::cerr << "Can't create " << output_filename << "\n";
+            return 1;
+        }
+
+        IMG_FileParms downscaled_parms = IMG_FileParms();
+        downscaled_parms.setDataType(IMG_FLOAT);    
+        downscaled_parms.readAlphaAsPlane(); // so we don't have to stripe it away later on.
+        IMG_File *downscaled = IMG_File::open(output_filename, &downscaled_parms); 
+        const IMG_Stat &downscaled_stat = downscaled->getStat();   
+
+        IMG_Stat output_stat = IMG_Stat(downscaled_stat);  
+        output_stat.setFilename(output_filename);
+        downscaled_parms.setDataType(IMG_HALF); // Back to half when possible.
+        IMG_File *output_file = IMG_File::create(output_filename, 
+            (const IMG_Stat)input_stat, &downscaled_parms);
+
+        UT_PtrArray<PXL_Raster *> scaled_raster_array;
+        PXL_Raster * scale_raster = nullptr;
+        void * scaled_ptr; 
+        const bool success = output_file->readImages(scaled_raster_array);
+        if (!success) {
+            std::cerr << "Integrity : Fail\n";
+            return 1;
+        } else {
+
+            // TODO: Multi raster denoise
+            const std::string & plane_name = planes_to_denoise.at(0);
+            int raster_index  = input_stat.getPlaneIndex(plane_name.c_str());
+            if (raster_index != -1) {
+                scale_raster = scaled_raster_array(raster_index);
+                xres   = scale_raster->getXres(); 
+                yres   = scale_raster->getYres();
+                scaled_ptr = scale_raster->getPixels();
+                std::cout << "INFO: Target plane: " << plane_name << "\n"; 
+            }
+            else {
+                std::cerr << "No plane to denoise found :" << plane_name << std::endl;
+                return 1;
+            }
+        }  
+        
+        // this does
+        for(size_t y=0; y<yres; ++y) {
+            // const float * output_f = (const float *)out_ptr;
+            const float * output_f = const_cast<float *>(&(result.front()));
+            const void * data = (const void*)&output_f[y*xres*3];
+            scale_raster->writeToRow(y, data);
+        }
+       
+        // End
+        if (output_file) {
+            output_file->writeImages(scaled_raster_array);
+            output_file->close();
+        }
+
+
+
+
+
+
+
+
+        return 0;   
+    }
+
+
+    // denoising path:
    if(beauty && xres && yres) {
         // Create an Open Image Denoise device
         oidn::DeviceRef device = oidn::newDevice();
