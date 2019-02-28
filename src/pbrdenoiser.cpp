@@ -41,7 +41,7 @@ main(int argc, char *argv[])
     std::vector<std::string> planes_to_denoise{"C"}; 
 
     args.initialize(argc, argv);
-    args.stripOptions("d:p:i:o:lsP:f");
+    args.stripOptions("d:p:i:o:lsP:f:");
 
     const char * intput_filename;
     const char * output_filename;
@@ -91,7 +91,7 @@ main(int argc, char *argv[])
 
      if(args.found('f')) {   
         downscale = args.iargp('f');
-        std::cout << "INFO: Downsample: x" << passes << "\n"; 
+        std::cout << "INFO: Downsampling: x" << downscale << "\n"; 
     }
 
 
@@ -108,8 +108,10 @@ main(int argc, char *argv[])
     void * normals_ptr;
     PXL_Raster * albedo = nullptr;
     void * albedo_ptr;
+    PXL_Raster * scaled_raster = nullptr;
     size_t xres = 0, yres = 0;
 
+    UT_PtrArray<PXL_Raster *> scaled_raster_array;
     UT_PtrArray<PXL_Raster *> raster_array;
     const bool success = input_file->readImages(raster_array);
     if (!success) {
@@ -150,44 +152,42 @@ main(int argc, char *argv[])
     }
 
 
-    auto output_ptr = std::make_unique<float[]>(3*xres*yres);
 
     // Filtering path:
     if(downscale && beauty && xres && yres)
     {
         const size_t size = xres*yres*3;
-        std::vector<float> input;
+        std::vector<float> input; input.resize(size);
         const float * beauty_f = (const float*) beauty_ptr;
         for(size_t i=0; i<size; ++i) {
             input[i] = beauty_f[i];
         }
 
-        MitchellNetravali kernel;
-        std::vector<float> result = downsample<MitchellNetravali>(input, downscale, kernel);
-
+        // shortcur to scale all rasters:
+        std::cout << "INFO: Down scaling aov..." << std::flush; 
         IMG_FileParms parms;
-        parms.scaleByFactor(1.0f/downscale, 1.0f/downscale);
-        if (!IMG_File::copyToFile(intput_filename, output_filename, parms)) {
+        parms.scaleImageBy(1.0f/downscale, 1.0f/downscale);
+        if (!IMG_File::copyToFile(intput_filename, output_filename, &parms)) {
             std::cerr << "Can't create " << output_filename << "\n";
             return 1;
         }
+        std::cout << " done.\n" << std::flush; 
 
+        // reopen scaled image
         IMG_FileParms downscaled_parms = IMG_FileParms();
         downscaled_parms.setDataType(IMG_FLOAT);    
         downscaled_parms.readAlphaAsPlane(); // so we don't have to stripe it away later on.
-        IMG_File *downscaled = IMG_File::open(output_filename, &downscaled_parms); 
-        const IMG_Stat &downscaled_stat = downscaled->getStat();   
+        IMG_File *scaled_image = IMG_File::open(output_filename, &downscaled_parms); 
+        const IMG_Stat &downscaled_stat = scaled_image->getStat();   
 
         IMG_Stat output_stat = IMG_Stat(downscaled_stat);  
-        output_stat.setFilename(output_filename);
+        // output_stat.setFilename(output_filename);
         downscaled_parms.setDataType(IMG_HALF); // Back to half when possible.
-        IMG_File *output_file = IMG_File::create(output_filename, 
-            (const IMG_Stat)input_stat, &downscaled_parms);
+        // IMG_File *output_file = IMG_File::create(output_filename, 
+            // (const IMG_Stat)input_stat, &downscaled_parms);
 
-        UT_PtrArray<PXL_Raster *> scaled_raster_array;
-        PXL_Raster * scale_raster = nullptr;
-        void * scaled_ptr; 
-        const bool success = output_file->readImages(scaled_raster_array);
+       
+        const bool success = scaled_image->readImages(scaled_raster_array);
         if (!success) {
             std::cerr << "Integrity : Fail\n";
             return 1;
@@ -197,45 +197,50 @@ main(int argc, char *argv[])
             const std::string & plane_name = planes_to_denoise.at(0);
             int raster_index  = input_stat.getPlaneIndex(plane_name.c_str());
             if (raster_index != -1) {
-                scale_raster = scaled_raster_array(raster_index);
-                xres   = scale_raster->getXres(); 
-                yres   = scale_raster->getYres();
-                scaled_ptr = scale_raster->getPixels();
-                std::cout << "INFO: Target plane: " << plane_name << "\n"; 
+                scaled_raster = scaled_raster_array(raster_index);
+                xres   = scaled_raster->getXres(); 
+                yres   = scaled_raster->getYres();
             }
             else {
-                std::cerr << "No plane to denoise found :" << plane_name << std::endl;
+                std::cerr << "Can't find a raster to refilter :" << plane_name << std::endl;
                 return 1;
             }
         }  
-        
-        // this does
+       
+        // Filter an image 
+        GS::MitchellNetravali kernel;
+        std::cout << "INFO: Down scaling " << planes_to_denoise.at(0)\
+             << " with " << kernel.name() << "..." << std::flush; 
+        const std::vector<float> result = GS::downsample<GS::MitchellNetravali>(input, downscale, kernel);
+        std::cout << " done.\n" << std::flush; 
+        // copy filtered image to raster
+        std::cout << "INFO: Saving images to: " << output_filename << "\n"; 
+
         for(size_t y=0; y<yres; ++y) {
             // const float * output_f = (const float *)out_ptr;
             const float * output_f = const_cast<float *>(&(result.front()));
             const void * data = (const void*)&output_f[y*xres*3];
-            scale_raster->writeToRow(y, data);
+            scaled_raster->writeToRow(y, data);
         }
        
         // End
-        if (output_file) {
-            output_file->writeImages(scaled_raster_array);
-            output_file->close();
+        if (scaled_image) {
+            scaled_image->writeImages(scaled_raster_array);
+            scaled_image->close();
+        } else {
+            std::cout << "ERROR: Can't save image to: " << output_filename << "\n"; 
+            return 1;
+
         }
 
+        beauty_ptr = scaled_raster->getPixels();
 
-
-
-
-
-
-
-        return 0;   
     }
 
 
     // denoising path:
    if(beauty && xres && yres) {
+        auto output_ptr = std::make_unique<float[]>(3*xres*yres);
         // Create an Open Image Denoise device
         oidn::DeviceRef device = oidn::newDevice();
         device.commit();
