@@ -9,10 +9,7 @@
 #include <UT/UT_String.h>
 
 #include "filtering.hpp"
-
-#ifdef BUILD_WITH_OIDN
-#include <OpenImageDenoise/oidn.hpp>
-#endif
+#include "pbrdenoiser.hpp"
 
 #include <vector>
 #include <iostream>
@@ -31,6 +28,7 @@ void usage(const char* program_name)
     std::cout << "\t-s  image is in sRGB color space  (linear by default)\n";
     std::cout << "\t-p  image planes to be filtered   ('C'    by default)\n";
     std::cout << "\t-P  number of denoising passes    (1      by default)\n";
+    std::cout << "\t-f  Downscaling factor            (1      by default)\n";
 }
 
 int 
@@ -39,21 +37,25 @@ main(int argc, char *argv[])
 
     CMD_Args args;
     std::vector<std::string> planes_to_denoise{"C"}; 
+    pbrd::monotonic_timer timer;
 
     args.initialize(argc, argv);
     args.stripOptions("d:p:i:o:lsP:f:");
+    using Info = std::vector<std::string>;
 
-    const char * intput_filename;
+    const char * input_filename;
     const char * output_filename;
     const char * albedo_name = "basecolor";
-    const char * normals_name = "N";
+    const char * normal_name = "N";
     bool srgb = false;
     bool hdri = true;
     size_t passes = 1;
     size_t downscale = 0;
+    size_t xres, yres;
+    xres = yres = 0;
 
     if (args.found('i') && args.found('o')) {
-        intput_filename = args.argp('i');
+        input_filename  = args.argp('i');
         output_filename = args.argp('o');
     }
     else {
@@ -63,7 +65,7 @@ main(int argc, char *argv[])
     }
 
     if (args.found('n')) {
-        normals_name = args.argp('N');
+        normal_name = args.argp('N');
     }
 
     if (args.found('a')) {
@@ -75,14 +77,14 @@ main(int argc, char *argv[])
     }
 
     const char * dynamic = hdri ? "high" : "low";
-    std::cout << "INFO:  Color range: " << dynamic << "\n"; 
+    std::cout << "INFO: Color  range: " << dynamic << "\n"; 
 
     if (args.found('s')) {
         srgb = true;
 
     }
     const char * gamma = srgb ? "sRGB" : "linear";
-    std::cout << "INFO:  Color gamma: " << gamma << "\n"; 
+    std::cout << "INFO: Color  gamma: " << gamma << "\n"; 
 
     if(args.found('P')) {   
         passes = args.iargp('P');
@@ -91,228 +93,127 @@ main(int argc, char *argv[])
 
      if(args.found('f')) {   
         downscale = args.iargp('f');
-        std::cout << "INFO: Downsampling: x" << downscale << "\n"; 
+        std::cout << "INFO: Downsampling: x " << downscale << "\n"; 
     }
 
+    
+    std::cout << "INFO: Reading file... " << std::flush; 
 
-    IMG_FileParms input_parms = IMG_FileParms();
-    input_parms.setDataType(IMG_FLOAT);    
-    input_parms.readAlphaAsPlane(); // so we don't have to stripe it away later on.
-
-    IMG_File *input_file       = IMG_File::open(intput_filename, &input_parms); 
-    const IMG_Stat &input_stat = input_file->getStat();                      
-
-    PXL_Raster * beauty = nullptr;
-    void * beauty_ptr; 
-    PXL_Raster * normals = nullptr;
-    void * normals_ptr;
-    PXL_Raster * albedo = nullptr;
-    void * albedo_ptr;
-    PXL_Raster * scaled_raster = nullptr;
-    size_t xres = 0, yres = 0;
-
-    UT_PtrArray<PXL_Raster *> scaled_raster_array;
+    // Readin rasters from file:
     UT_PtrArray<PXL_Raster *> raster_array;
-    const bool success = input_file->readImages(raster_array);
-    if (!success) {
+    auto input_file = pbrd::read_rasters_as_float(input_filename, raster_array);
+
+    if(!input_file) {
         std::cerr << "Integrity : Fail\n";
         return 1;
-    } else {
-
-        // TODO: Multi raster denoise
-        const std::string & plane_name = planes_to_denoise.at(0);
-        int raster_index  = input_stat.getPlaneIndex(plane_name.c_str());
-        if (raster_index != -1) {
-            beauty = raster_array(raster_index);
-            xres   = beauty->getXres(); 
-            yres   = beauty->getYres();
-            beauty_ptr = beauty->getPixels();
-            std::cout << "INFO: Target plane: " << plane_name << "\n"; 
-        }
-        else {
-            std::cerr << "No plane to denoise found :" << plane_name << std::endl;
-            return 1;
-        }
-    }  
-    //
-    int raster_index  = input_stat.getPlaneIndex(normals_name);
-    if (raster_index != -1) {
-        normals = raster_array(raster_index);
-        normals_ptr = normals->getPixels();
-            std::cout << "INFO: Normal plane: " << normals_name << "\n"; 
-
-    }
-    //
-    raster_index  = input_stat.getPlaneIndex(albedo_name);
-    if (raster_index != -1) {
-        albedo = raster_array(raster_index);
-        albedo_ptr = albedo->getPixels();
-            std::cout << "INFO: Albedo plane: " << albedo_name << "\n"; 
-
     }
 
+    xres = input_file->getStat().getXres();
+    yres = input_file->getStat().getYres();
+
+    // beauty
+    const char * plane_name = planes_to_denoise.at(0).c_str();
+    PXL_Raster * beauty     = pbrd::get_raster_by_name(plane_name, input_file.get(), raster_array);
+
+    if(!beauty) {
+        std::cerr << "No plane to denoise found:" << plane_name << std::endl;
+        input_file->close();
+        return 1;
+    }
+
+    print_info(Info{ "done."}, timer);
 
 
-    // Filtering path:
-    if(downscale && beauty && xres && yres)
-    {
+    void * denoise_input_buffer = beauty->getPixels();
+
+    // normals, albedo
+    PXL_Raster * normal = pbrd::get_raster_by_name(normal_name, input_file.get(), raster_array);
+    PXL_Raster * albedo = pbrd::get_raster_by_name(albedo_name, input_file.get(), raster_array);
+    if(normal) {  std::cout << "INFO: Normal plane: " << normal_name << "\n";  }
+    if(albedo) {  std::cout << "INFO: Albedo plane: " << albedo_name << "\n";  }
+
+
+    // Filtering path (will replace all above )
+    if(downscale && beauty && xres && yres) {
+
+        // Copy current beauty
         const size_t size = xres*yres*3;
-        std::vector<float> input; input.resize(size);
-        const float * beauty_f = (const float*) beauty_ptr;
+        std::vector<float> input(size);
+        const float * beauty_f = (const float*)beauty->getPixels();
         for(size_t i=0; i<size; ++i) {
             input[i] = beauty_f[i];
         }
-
-        // shortcur to scale all rasters:
+        // shortcut to scale down all rasters:
+        timer.restart();
         std::cout << "INFO: Down scaling aov..." << std::flush; 
         IMG_FileParms parms;
         parms.scaleImageBy(1.0f/downscale, 1.0f/downscale);
-        if (!IMG_File::copyToFile(intput_filename, output_filename, &parms)) {
+        if (!IMG_File::copyToFile(input_filename, output_filename, &parms)) {
             std::cerr << "Can't create " << output_filename << "\n";
             return 1;
         }
-        std::cout << " done.\n" << std::flush; 
+        print_info(Info{ "done."}, timer);
 
-        // reopen scaled image
-        IMG_FileParms downscaled_parms = IMG_FileParms();
-        downscaled_parms.setDataType(IMG_FLOAT);    
-        downscaled_parms.readAlphaAsPlane(); // so we don't have to stripe it away later on.
-        IMG_File *scaled_image = IMG_File::open(output_filename, &downscaled_parms); 
-        const IMG_Stat &downscaled_stat = scaled_image->getStat();   
-
-        IMG_Stat output_stat = IMG_Stat(downscaled_stat);  
-        // output_stat.setFilename(output_filename);
-        downscaled_parms.setDataType(IMG_HALF); // Back to half when possible.
-        // IMG_File *output_file = IMG_File::create(output_filename, 
-            // (const IMG_Stat)input_stat, &downscaled_parms);
-
-       
-        const bool success = scaled_image->readImages(scaled_raster_array);
-        if (!success) {
-            std::cerr << "Integrity : Fail\n";
-            return 1;
-        } else {
-
-            // TODO: Multi raster denoise
-            const std::string & plane_name = planes_to_denoise.at(0);
-            int raster_index  = input_stat.getPlaneIndex(plane_name.c_str());
-            if (raster_index != -1) {
-                scaled_raster = scaled_raster_array(raster_index);
-                xres   = scaled_raster->getXres(); 
-                yres   = scaled_raster->getYres();
-            }
-            else {
-                std::cerr << "Can't find a raster to refilter :" << plane_name << std::endl;
-                return 1;
-            }
-        }  
-       
+        // Reopen scaled image
+        // we overwrite here input_file unique_ptr, raster_array, resolution x/y,
+        // all rasters' pointer and denoise_input_buffer
+        // Note: we assume correctness, because we've just created that file ourself.
+        input_file = pbrd::read_rasters_as_float(output_filename, raster_array);
+        beauty = pbrd::get_raster_by_name(plane_name,  input_file.get(), raster_array);
+        normal = pbrd::get_raster_by_name(normal_name, input_file.get(), raster_array);
+        albedo = pbrd::get_raster_by_name(albedo_name, input_file.get(), raster_array);
+        xres   = input_file->getStat().getXres();
+        yres   = input_file->getStat().getYres();
+ 
         // Filter an image 
-        GS::MitchellNetravali kernel;
-        std::cout << "INFO: Down scaling " << planes_to_denoise.at(0)\
-             << " with " << kernel.name() << "..." << std::flush; 
-        const std::vector<float> result = GS::downsample<GS::MitchellNetravali>(input, downscale, kernel);
-        std::cout << " done.\n" << std::flush; 
-        // copy filtered image to raster
-        std::cout << "INFO: Saving images to: " << output_filename << "\n"; 
+        gs::MitchellNetravali kernel;
+        timer.restart();
+        std::cout << "INFO: Down scaling " << planes_to_denoise.at(0);
+        std::cout << " with " << kernel.name() << "..." << std::flush; 
+        
+        const std::vector<float> result = \
+            gs::downsample<gs::MitchellNetravali>(input, downscale, kernel);
+        
+        print_info(Info{ "done."}, timer);
 
-        for(size_t y=0; y<yres; ++y) {
-            // const float * output_f = (const float *)out_ptr;
-            const float * output_f = const_cast<float *>(&(result.front()));
-            const void * data = (const void*)&output_f[y*xres*3];
-            scaled_raster->writeToRow(y, data);
-        }
-       
-        // End
-        if (scaled_image) {
-            scaled_image->writeImages(scaled_raster_array);
-            scaled_image->close();
-        } else {
-            std::cout << "ERROR: Can't save image to: " << output_filename << "\n"; 
-            return 1;
-
-        }
-
-        beauty_ptr = scaled_raster->getPixels();
-
+        denoise_input_buffer = (void*)const_cast<float *>(&(result.front()));
     }
 
-
-    // denoising path:
+    // denoising:
    if(beauty && xres && yres) {
-        auto output_ptr = std::make_unique<float[]>(3*xres*yres);
-        // Create an Open Image Denoise device
-        oidn::DeviceRef device = oidn::newDevice();
-        device.commit();
-
-        // Create a denoising filter
-        oidn::FilterRef filter = device.newFilter("RT"); // generic ray tracing filter
-        if (albedo) {
-            filter.setImage("albedo", albedo_ptr, oidn::Format::Float3, xres, yres); // optional
-        }
-        if (normals) {
-            filter.setImage("normal", normals_ptr, oidn::Format::Float3, xres, yres); // optional
-        }
-
-        std::cout << "INFO: Start denoising...\n" << std::flush; 
-
-        //we swap those to run denoiser multiply times
-        void * in_ptr  = beauty_ptr;
-        void * out_ptr = output_ptr.get();
-
-        for(int pass=0; pass<passes; ++pass)
-        {
-            filter.setImage("color",  in_ptr,  oidn::Format::Float3, xres, yres);
-            filter.setImage("output", out_ptr, oidn::Format::Float3, xres, yres);
-            filter.set("hdr", hdri); // image is HDR
-            filter.set("srgb", srgb); // image is srgb
-            filter.commit();
-            // Filter the image
-            std::cout << "INFO: Pass " << pass+1<< "\n" << std::flush;
-            filter.execute();
-
-            if (pass < passes-1) {
-                void *tmp = out_ptr; 
-                out_ptr = in_ptr;
-                in_ptr = tmp;
-            }
-        }
-
-
-        std::cout << "INFO: done.\n"; 
-
-
-        // Check for errors
-        const char* errorMessage;
-        if (device.getError(errorMessage) != oidn::Error::None) {
-            std::cerr << "Error: " << errorMessage << std::endl;
-            return 1; 
-        }
-
-
-        std::cout << "INFO: Saving images to: " << output_filename << "\n"; 
-
-         // output_file should be a copy of working frame with modified raster:
-        IMG_Stat output_stat = IMG_Stat(input_stat);  
-        output_stat.setFilename(output_filename);
-        input_parms.setDataType(IMG_HALF); // Back to half when possible.
-        IMG_File *output_file = IMG_File::create(output_filename, 
-            (const IMG_Stat)input_stat, &input_parms);
-        // This does't work :(
-        // raster->setRaster((void*)output_ptr.get(), true, true); 
         
-        // this does
+        //
+        timer.restart();
+        std::cout << "INFO: Start denoising " << planes_to_denoise.at(0) << "... " << std::flush; 
+
+        const char * error;
+        auto output = pbrd::intel::filter_with_oidn(denoise_input_buffer, 
+            albedo->getPixels(), normal->getPixels(), &error, xres, yres, hdri, srgb);
+
+        if(!output){
+            std::cerr << "OIDN :" << error << "\n";
+            return 1;
+        }
+
+        std::cout << "done.\n" << std::flush; 
+        print_info(Info{ "done."}, timer);
+
+        // copy back to
         for(size_t y=0; y<yres; ++y) {
-            const float * output_f = (const float *)out_ptr;
-            const void * data = (const void*)&output_f[y*xres*3];
+            const void * data = (const void*)&output.get()[y*xres*3];
             beauty->writeToRow(y, data);
         }
-       
-        // End
-        if (output_file) {
-            output_file->writeImages(raster_array);
-            output_file->close();
+
+        std::cout << "INFO: Saving images to " << output_filename << "... "; 
+        timer.restart();
+        const IMG_Stat & stat = input_file->getStat();
+        if (!pbrd::save_rasters_to_file(output_filename, stat, raster_array)) {
+            std::cerr << "ERROR: Can't save image: " << output_filename << "\n"; 
+            return 1;
         }
+
+        print_info(Info{ "done."}, timer);
+
     }
 
 

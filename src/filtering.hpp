@@ -21,7 +21,7 @@
 #include <cassert>    // assert()
 #include <chrono>     // std::chrono for timing benchmarks
 using namespace std;
-namespace GS {
+namespace gs {
 // Apply to sequence f the inverse discrete convolution given by
 // a pre-factored LU decomposition\label{lst:inverse-convolution-begin}
 template<size_t M>
