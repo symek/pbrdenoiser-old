@@ -195,7 +195,6 @@ main(int argc, char *argv[])
             return 1;
         }
 
-        std::cout << "done.\n" << std::flush; 
         print_info(Info{ "done."}, timer);
 
         // copy back to
