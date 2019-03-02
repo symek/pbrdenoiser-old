@@ -36,17 +36,20 @@ main(int argc, char *argv[])
 {   
 
     CMD_Args args;
-    std::vector<std::string> planes_to_denoise{"C"}; 
     pbrd::monotonic_timer timer;
 
     args.initialize(argc, argv);
     args.stripOptions("d:p:i:o:lsP:f:");
-    using Info = std::vector<std::string>;
+
+    using Info = pbrd::monotonic_timer::Info;
+    // this might be extended by arguments:
+    std::vector<std::string> planes_to_denoise{"C"}; 
 
     const char * input_filename;
     const char * output_filename;
     const char * albedo_name = "basecolor";
     const char * normal_name = "N";
+
     bool srgb = false;
     bool hdri = true;
     size_t passes = 1;
@@ -96,8 +99,7 @@ main(int argc, char *argv[])
         std::cout << "INFO: Downsampling: x " << downscale << "\n"; 
     }
 
-    
-    std::cout << "INFO: Reading file... " << std::flush; 
+    timer.begin("Reading file... ");
 
     // Readin rasters from file:
     UT_PtrArray<PXL_Raster *> raster_array;
@@ -121,7 +123,8 @@ main(int argc, char *argv[])
         return 1;
     }
 
-    print_info(Info{ "done."}, timer);
+    timer.end();
+    std::cout << "INFO: Noisy  plane: " << plane_name << " (found) \n"; 
 
 
     void * denoise_input_buffer = beauty->getPixels();
@@ -133,31 +136,38 @@ main(int argc, char *argv[])
     if(albedo) {  std::cout << "INFO: Albedo plane: " << albedo_name << "\n";  }
 
 
+    #if 0
+    // we need this not to evaporate too soon:
+    std::vector<float> scaled_result;
+
     // Filtering path (will replace all above )
     if(downscale && beauty && xres && yres) {
 
         // Copy current beauty
         const size_t size = xres*yres*3;
-        std::vector<float> input(size);
+        const size_t fullxres = xres;
+        const size_t fullyres = yres;
+        std::vector<float> full_res_input(size);
         const float * beauty_f = (const float*)beauty->getPixels();
+
         for(size_t i=0; i<size; ++i) {
-            input[i] = beauty_f[i];
+            full_res_input[i] = beauty_f[i];
         }
         // shortcut to scale down all rasters:
-        timer.restart();
-        std::cout << "INFO: Down scaling aov..." << std::flush; 
+        timer.begin("Down scaling aov...");
         IMG_FileParms parms;
         parms.scaleImageBy(1.0f/downscale, 1.0f/downscale);
         if (!IMG_File::copyToFile(input_filename, output_filename, &parms)) {
             std::cerr << "Can't create " << output_filename << "\n";
             return 1;
         }
-        print_info(Info{ "done."}, timer);
+        timer.end();
 
         // Reopen scaled image
         // we overwrite here input_file unique_ptr, raster_array, resolution x/y,
         // all rasters' pointer and denoise_input_buffer
         // Note: we assume correctness, because we've just created that file ourself.
+        raster_array.clear();
         input_file = pbrd::read_rasters_as_float(output_filename, raster_array);
         beauty = pbrd::get_raster_by_name(plane_name,  input_file.get(), raster_array);
         normal = pbrd::get_raster_by_name(normal_name, input_file.get(), raster_array);
@@ -167,24 +177,25 @@ main(int argc, char *argv[])
  
         // Filter an image 
         gs::MitchellNetravali kernel;
-        timer.restart();
-        std::cout << "INFO: Down scaling " << planes_to_denoise.at(0);
-        std::cout << " with " << kernel.name() << "..." << std::flush; 
-        
-        const std::vector<float> result = \
-            gs::downsample<gs::MitchellNetravali>(input, downscale, kernel);
-        
-        print_info(Info{ "done."}, timer);
+        timer.begin(Info{"Down scaling ", planes_to_denoise.at(0), 
+            " with ",  kernel.name(),  "..." });
 
-        denoise_input_buffer = (void*)const_cast<float *>(&(result.front()));
+        auto result = gs::downsample<gs::MitchellNetravali>(full_res_input, downscale, kernel);
+        scaled_result.swap(result);
+        
+        timer.end();
+
+        denoise_input_buffer = (void*)const_cast<float*>(&scaled_result.front());
+
     }
+    #endif
+        
 
     // denoising:
-   if(beauty && xres && yres) {
-        
+    if(beauty && xres && yres) {
+            
         //
-        timer.restart();
-        std::cout << "INFO: Start denoising " << planes_to_denoise.at(0) << "... " << std::flush; 
+        timer.begin(Info{"Start denoising ", planes_to_denoise.at(0), "... "}); 
 
         const char * error;
         auto output = pbrd::intel::filter_with_oidn(denoise_input_buffer, 
@@ -195,26 +206,27 @@ main(int argc, char *argv[])
             return 1;
         }
 
-        print_info(Info{ "done."}, timer);
+        timer.end();
 
         // copy back to
         for(size_t y=0; y<yres; ++y) {
-            const void * data = (const void*)&output.get()[y*xres*3];
-            beauty->writeToRow(y, data);
+            // const float * data = (const float * )denoise_input_buffer;
+            const float * scanline = &output.get()[y*xres*3];
+            beauty->writeToRow(y, (const void*)scanline);
         }
 
-        std::cout << "INFO: Saving images to " << output_filename << "... "; 
-        timer.restart();
+        timer.begin(Info{"Saving images to ", output_filename,  "... " });
+
         const IMG_Stat & stat = input_file->getStat();
         if (!pbrd::save_rasters_to_file(output_filename, stat, raster_array)) {
             std::cerr << "ERROR: Can't save image: " << output_filename << "\n"; 
             return 1;
         }
 
-        print_info(Info{ "done."}, timer);
+        timer.end();
+
 
     }
-
 
     return 0;
 }

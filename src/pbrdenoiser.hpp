@@ -7,7 +7,7 @@
 namespace pbrd {
 
 bool save_rasters_to_file(const char* filename, const IMG_Stat & stat, 
-    UT_PtrArray<PXL_Raster *> raster_array) 
+    UT_PtrArray<PXL_Raster *> & raster_array) 
 {
 
         IMG_FileParms parms = IMG_FileParms();
@@ -56,12 +56,14 @@ PXL_Raster * get_raster_by_name(const char * plane, const IMG_File * input_file,
     return raster_array(raster_index);
 }
 
+
 //https://codereview.stackexchange.com/questions/196245/extremely-simple-timer-class-in-c
 template <typename Clock = std::chrono::high_resolution_clock>
 class Timer
 {
     typename Clock::time_point start_point;
 public:
+    using Info = std::vector<std::string>;
     Timer() : 
         start_point(Clock::now())
     {}
@@ -78,19 +80,49 @@ public:
     {
         start_point = Clock::now(); 
     }
+
+    void begin(const char * info) { print(info, false); }
+
+    void begin(const Info & info) { print(info, false); }
+
+    void end(const char* info=nullptr) 
+    {
+        if (!info)
+            print("done.", true); 
+        else
+            print(info, true);
+    }
+
+    void print(const char * info, const bool timeit=false) 
+    {
+        print(Info{info}, timeit);
+    }
+
+    void print(const Info & info, const bool timeit=false) 
+    {
+        print_info(info, timeit);
+        restart();
+    }
+private:
+    void print_info(const Info & info, const bool timeit=false)
+    {
+        if (!timeit)
+            std::cout << "INFO: ";
+
+        for (const auto & s: info)
+            std::cout << s;
+        std::cout << std::flush;
+
+        if (timeit)
+            std::cout << " (" << elapsed_time<unsigned int, \
+                std::chrono::milliseconds>() /1000.0 << "s)\n" << std::flush;
+    }
 };
 
 using precise_timer   = Timer<>;
 using system_timer    = Timer<std::chrono::system_clock>;
 using monotonic_timer = Timer<std::chrono::steady_clock>;
 
-void print_info(const std::vector<std::string> & info, monotonic_timer & timer)
-{
-    for (const auto & s: info)
-        std::cout << s;
-    std::cout << " (" << timer.elapsed_time<unsigned int, \
-        std::chrono::milliseconds>() /1000.0 << "s)\n" << std::flush;
-}
 
 namespace intel 
 {
