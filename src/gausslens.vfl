@@ -85,9 +85,6 @@ gausslens(
             if (handle != -1) {
                 int sample = vex_store_increament(handle, col, row);
                 seed = random_sobol(set(row, 0, col), sample);
-                // int counter = 1;
-                // if(length(seed) >= 1.0)
-                //     seed /= length(seed);
 
             }
         } else {
