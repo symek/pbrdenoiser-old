@@ -1,0 +1,116 @@
+/*
+
+ */
+
+#pragma opname          gausslens
+#pragma oplabel         "Gauss Lens"
+
+#pragma hint    x       hidden
+#pragma hint    y       hidden
+#pragma hint    xres    hidden
+#pragma hint    yres    hidden
+#pragma hint    SID     hidden
+#pragma hint    Time    hidden
+#pragma hint    dofx    hidden
+#pragma hint    dofy    hidden
+#pragma hint    aspect  hidden
+#pragma hint    P       hidden
+#pragma hint    I       hidden
+#pragma hint    valid   hidden
+#pragma hint    redistribute toggle
+#pragma hint    usesobol     toggle
+
+#pragma label   zoom            "Zoom"
+#pragma label   curvature       "Lens Curvature"
+#pragma label   focus           "Focus Distance"
+#pragma label   coc             "Circle Of Confusion"
+#pragma label   redistribute    "Redistribute Samples"
+#pragma label   usesobol        "Stratify Samples"
+#pragma label   varscale        "Variance Size"
+
+
+#pragma range   curvature       -1 1
+#pragma range   zoom            0 10
+#pragma range   focus           0 10
+#pragma range   coc             0 1
+
+#include "math.h"
+
+cvex
+gausslens(
+        // Inputs
+        float x = 0;
+        float y = 0;
+        float Time = 0;
+        float dofx = 0;
+        float dofy = 0;
+        float aspect = 1;
+        int   xres   = 0;
+        int   yres   = 0;
+        int   SID    = 0;
+
+        // Outputs
+        export vector P = 0;
+        export vector I = 0;
+        export int valid = 1;
+
+        // Shader arguments
+        int   redistribute = 1;
+        int   usesobol = 1;
+        float varscale = .333;
+        float zoom = 1;
+        float curvature = 0;
+        float focus = 1;
+        float coc = 1;
+        )
+{
+
+    float xx, yy;
+    if (redistribute) 
+    {
+        float nx = (x+1)/2.0;
+        float ny = (y+1)/2.0;
+        int row = floor((float)xres*nx);
+        int col = floor((float)yres*ny);
+
+        float size_x = 1.0 / xres;
+        float size_y = 1.0 / yres;
+        
+        float center_x = row * size_x + size_x/2; 
+        float center_y = col * size_y + size_y/2;
+
+        vector seed;
+        if (usesobol) {
+            int handle = vex_store_open("samples", xres, yres);
+            if (handle != -1) {
+                int sample = vex_store_increament(handle, col, row);
+                seed = random_sobol(set(row, 0, col), sample);
+                // int counter = 1;
+                // if(length(seed) >= 1.0)
+                //     seed /= length(seed);
+
+            }
+        } else {
+            seed = nrandom("mersenne");// this really doesn't work
+        }
+       
+        vector  rsnd       = sample_normal(seed);
+        vector variance    = set(rsnd.x, 0, rsnd.y) /  set((float)xres, 1, (float)yres);
+        vector pixel       = 2*set(center_x-.5, 0, center_y-.5) + variance * varscale; 
+    
+        xx = pixel.x;
+        yy = pixel.z;
+    } 
+    else 
+    {
+        xx = x;
+        yy = y;
+    }
+
+    // pcwrite("samples.pc", "P", set(xx, 0, yy));
+ 
+    P  = set(-focus*coc*dofx, -focus*coc*dofy, 0);
+    I  = set(xx/zoom, yy/(zoom*aspect), 1 + (1 - 2*(xx*xx + yy*yy))*curvature);
+    I += set(coc*dofx, coc*dofy, 0);
+   
+}

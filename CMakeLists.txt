@@ -44,7 +44,7 @@ link_directories($ENV{HDSO})
 # Add a executable.
 set( executable_name pbrdenoiser)
 
-
+add_library(VEX_Store SHARED src/VEXStore.cpp)
 
 add_executable( ${executable_name}
     # external/cxxopts/include/cxxopts.hpp
@@ -56,8 +56,13 @@ add_executable( ${executable_name}
 
 # Link against the Houdini libraries, and add required include directories and compile definitions.
 target_link_libraries( ${executable_name} Houdini )
+target_link_libraries( VEX_Store Houdini )
+
 if (BUILD_WITH_OIDN)
 	target_link_libraries( ${executable_name} OpenImageDenoise )
 endif()
 # Configure several common target properties, such as its output directory.
 houdini_configure_target( ${executable_name} )
+houdini_configure_target( VEX_Store )
+
+
