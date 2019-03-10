@@ -2,9 +2,6 @@
 #ifdef BUILD_WITH_OIDN
 #include <OpenImageDenoise/oidn.hpp>
 #endif
-#include <atomic>
-#include <chrono>
-#include <ostream>
 
 namespace pbrd {
 
@@ -16,7 +13,7 @@ bool save_rasters_to_file(const char *filename, const IMG_Stat &stat,
     output_stat.setFilename(filename);
     parms.setDataType(IMG_HALF); // Back to half when possible.
     IMG_File *output_file =
-        IMG_File::create(filename, (const IMG_Stat)output_stat, &parms);
+        IMG_File::create(filename, output_stat, &parms);
 
     if (output_file) {
         output_file->writeImages(raster_array);
@@ -27,7 +24,7 @@ bool save_rasters_to_file(const char *filename, const IMG_Stat &stat,
     return false;
 }
 std::unique_ptr<IMG_File>
-read_rasters_as_float(const char *filename, UT_PtrArray<PXL_Raster *> raster_array)
+read_rasters_as_float(const char *filename, UT_PtrArray<PXL_Raster *> &raster_array)
  {
     IMG_FileParms input_parms = IMG_FileParms();
     input_parms.setDataType(IMG_FLOAT);
@@ -47,7 +44,7 @@ read_rasters_as_float(const char *filename, UT_PtrArray<PXL_Raster *> raster_arr
 }
 
 PXL_Raster *get_raster_by_name(const char *plane, const IMG_File *input_file,
-                               UT_PtrArray<PXL_Raster *> raster_array) {
+                               UT_PtrArray<PXL_Raster *> &raster_array) {
     const IMG_Stat &input_stat = input_file->getStat();
     const int raster_index = input_stat.getPlaneIndex(plane);
     if (raster_index == -1) {
