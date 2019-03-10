@@ -2,6 +2,7 @@
 #ifdef BUILD_WITH_OIDN
 #include <OpenImageDenoise/oidn.hpp>
 #endif
+#include <fstream>
 #include <atomic>
 #include <chrono>
 #include <ostream>
