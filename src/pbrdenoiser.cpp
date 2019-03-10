@@ -5,7 +5,12 @@
 #include <PXL/PXL_Raster.h>
 #include <UT/UT_PtrArray.h>
 
-#include "filtering.hpp"
+#include <atomic>
+#include <chrono>
+#include <fstream>
+#include <iostream>
+#include <vector>
+
 #include "pbrdenoiser.hpp"
 
 void usage(const char *program_name) {
@@ -87,8 +92,9 @@ int main(int argc, char *argv[]) {
         std::cout << "INFO: Downsampling: x " << downscale << "\n";
     }
 
-    if(!static_cast<bool>(std::ifstream(input_filename))) {
-        std::cerr << "ERROR: Can't open input file " << input_filename << " (It probably doesn't exist)\n";
+    if (!static_cast<bool>(std::ifstream(input_filename))) {
+        std::cerr << "ERROR: Can't open input file " << input_filename
+                  << " (It probably doesn't exist)\n";
         return 1;
     }
 
@@ -134,7 +140,7 @@ int main(int argc, char *argv[]) {
         std::cout << "INFO: Albedo plane: " << albedo_name << "\n";
     }
 
-    #if 0
+#if 0
     // we need this not to evaporate too soon:
     std::vector<float> scaled_result;
 
